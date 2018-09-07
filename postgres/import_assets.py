@@ -58,7 +58,6 @@ while len_result == 100:
 
 for x in range(0, len(all_assets)):
     size = len(all_assets[x]["result"])
-    print size
 
     for i in range(0, size):
         symbol = all_assets[x]["result"][i]["symbol"]
@@ -85,14 +84,14 @@ for x in range(0, len(all_assets)):
             type_ = "SmartCoin"
         else:
             type_ = "User Issued"
-        #print all_assets[x]["result"][i]
+        print all_assets[x]["result"][i]
 
         try:
             data = api.explorer.get_volume(core_symbol, symbol)
         except:
             continue
 
-        #print symbol
+        print symbol
         print data["quote_volume"]
 
         try:
@@ -118,7 +117,7 @@ for x in range(0, len(all_assets)):
 
 
 # with updated volume, add stats
-query = "select sum(volume) from assets WHERE aname!='BTS'"
+query = "select sum(volume) from assets WHERE aname!='CYB'"
 cur.execute(query)
 results = cur.fetchone()
 volume = results[0]
@@ -130,12 +129,12 @@ cur.execute(query)
 results = cur.fetchone()
 market_cap = results[0]
 
-query = "INSERT INTO stats (type, value, date) VALUES('volume_bts', %s, NOW())"
+query = "INSERT INTO stats (type, value, date) VALUES('volume_cyb', %s, NOW())"
 print query
 cur.execute(query, (str(int(round(volume))),))
 con.commit()
 
-"""query = "INSERT INTO stats (type, value, date) VALUES('market_cap_bts', '"+str(int(round(market_cap)))+"', NOW())" # out of range for bigint, fix.
+"""query = "INSERT INTO stats (type, value, date) VALUES('market_cap_cyb', '"+str(int(round(market_cap)))+"', NOW())" # out of range for bigint, fix.
 print query
 cur.execute(query)
 con.commit()
@@ -149,7 +148,7 @@ holders = api.explorer.get_asset_holders_count(config.CORE_ASSET_ID)
 
 mcap = int(current_supply)
 
-query = "INSERT INTO assets (aname, aid, price, volume, mcap, type, current_supply, holders, wallettype) VALUES('BTS', '1.3.0', '1', %s, %s, %s, %s, %s, %s)"
+query = "INSERT INTO assets (aname, aid, price, volume, mcap, type, current_supply, holders, wallettype) VALUES('CYB', '1.3.0', '1', %s, %s, %s, %s, %s, %s)"
 cur.execute(query, (str(volume), str(mcap), 'Core Token', str(current_supply), str(holders), ''))
 con.commit()
 

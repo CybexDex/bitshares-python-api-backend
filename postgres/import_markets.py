@@ -8,7 +8,7 @@ import api.explorer
 import config
 
 
-ws = create_connection(config.WEBSOCKET_URL)
+ws = create_connection(config.WEBSOCKET_URL2)
 
 con = psycopg2.connect(**config.POSTGRES)
 cur = con.cursor()
@@ -71,7 +71,7 @@ for row in rows:
 
                 # this was an attempt to sum up volume of not bts crosses to calculate total DEX volume, disabled by now(need better math to convert to bts)
                 """
-                if float(data["base_volume"]) > 0 and float(row[3]) > 0 and row[1] != "BTS" and symbol != "BTS":
+                if float(data["base_volume"]) > 0 and float(row[3]) > 0 and row[1] != "CYB" and symbol != "CYB":
                     ws.send('{"id":1, "method":"call", "params":[0,"lookup_asset_symbols",[["' + symbol + '"], 0]]}')
                     result_l = ws.recv()
                     j_l = json.loads(result_l)

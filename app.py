@@ -17,6 +17,8 @@ services.profiler.init_app(app.app)
 application = app.app
 
 if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=5000)
+    print "port is 8081"
+    # app.run(host='0.0.0.0', port = 8081, debug= True, use_reloader=True)
+    app.run(host='0.0.0.0', port = 8081, use_reloader=True)
 
 
