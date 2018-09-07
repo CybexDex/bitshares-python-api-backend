@@ -1,20 +1,14 @@
 import os
 
 
-# WEBSOCKET_URL = os.environ.get('WEBSOCKET_URL', "ws://localhost:8090/ws")
 WEBSOCKET_URL = os.environ.get('WEBSOCKET_URL', "wss://shanghai.51nebula.com/")
-WEBSOCKET_URL2 = os.environ.get('WEBSOCKET_URL', "ws://121.40.95.24:8090/")
-# a connection to a bitshares full node
-# FULL_WEBSOCKET_URL = os.environ.get('FULL_WEBSOCKET_URL', "ws://88.99.145.10:9999/ws")
+# WEBSOCKET_URL2 = os.environ.get('WEBSOCKET_URL', "ws://121.40.95.24:8090/")
+WEBSOCKET_URL2 = os.environ.get('WEBSOCKET_URL', "ws://47.91.216.172:8090/")
 FULL_WEBSOCKET_URL = os.environ.get('FULL_WEBSOCKET_URL', "wss://shanghai.51nebula.com/")
 
-# a connection to an ElasticSearch wrapper
-#ES_WRAPPER = os.environ.get('ES_WRAPPER', "http://185.208.208.184:5000") # oxarbitrage
 ES_WRAPPER = os.environ.get('ES_WRAPPER', "http://95.216.32.252:5000") # clockwork
-# MONGODB_DB_URL = os.environ.get('MONGO_WRAPPER', "mongodb://yoyo:yoyo123@39.105.55.115:27017/cybex") # clockwork
 MONGODB_DB_URL = os.environ.get('MONGO_WRAPPER', "mongodb://monitor:ka649Ndhy10&@47.91.216.172:27017/cybex") # clockwork
 MONGODB_DB_NAME = os.environ.get('MONGO_DB_NAME', 'cybex')
-#ES_WRAPPER = os.environ.get('ES_WRAPPER', "https://eswrapper.bitshares.eu") # Infrastructure worker
 
 # Database connection: see https://www.postgresql.org/docs/current/static/libpq-connect.html#LIBPQ-PARAMKEYWORDS
 POSTGRES = {'host': os.environ.get('POSTGRES_HOST', 'localhost'),
