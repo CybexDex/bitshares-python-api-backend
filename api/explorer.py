@@ -7,7 +7,7 @@ from services.cache import cache
 import config
 import logging
 from pymongo import MongoClient
-import json
+import json, q
 from bson import json_util
 from bson.objectid import ObjectId
 
@@ -20,6 +20,9 @@ logging.basicConfig(level=logging.DEBUG,
 client = MongoClient(config.MONGODB_DB_URL)
 db = client[config.MONGODB_DB_NAME]
 
+logging.info(config.MONGODB_DB_URL)
+logging.info(config.MONGODB_DB_NAME)
+# qconn = q.q(host = config.Q_HOST, port = Q_PORT, user = Q_USER)
 
 def get_header():
     bitshares_ws_client = bitshares_ws_client_factory.get_instance()
@@ -91,35 +94,94 @@ def get_operation_full(operation_id):
 
 
 def get_trx(trx_id):
-    j = list(db.account_history.find({'block_data.trx_id':trx_id}))
+    j = list(db.account_history.find({'bulk.block_data.trx_id':trx_id}))
     results = [0 for x in range(len(j))]
     for n in range(0, len(j)):
-        # results[n] = {"op": json.loads(j[n]["operation_history"]["op"]),
-        results[n] = {"op": json.loads(j[n]["operation_history"]["op"]),
-                      "block_num": j[n]["block_data"]["block_num"],
-                      "id": j[n]["account_history"]["operation_id"],
-                      "op_in_trx": j[n]["operation_history"]["op_in_trx"],
-                      "result": j[n]["operation_history"]["operation_result"],
-                      "timestamp": j[n]["block_data"]["block_time"],
-                      "trx_in_block": j[n]["operation_history"]["trx_in_block"],
-                      "virtual_op": j[n]["operation_history"]["virtual_op"]
+        results[n] = {"op": [j[n]['bulk']['operation_type'],j[n]["op"]],
+                      "block_num": j[n]['bulk']["block_data"]["block_num"],
+                      "id": j[n]['bulk']["account_history"]["operation_id"],
+                      "timestamp": j[n]['bulk']["block_data"]["block_time"]
                       }
 
     return list(results)
 
 
+def get_ops_conds_mongo(account,start, end, op_type_id, asset, limit, page):
+    page = int(page)
+    limit_ = int(limit)
+    skip_ = page * limit_
+    if start != 'null' and end != 'null':
+        if op_type_id != -1:
+            if asset != 'null':
+                j = list (db.account_history.find({'bulk.account_history.account':account,'bulk.operation_type':op_type_id, 'bulk.block_data.block_time':{'$gte':start, '$lte':end},\
+                 '$or':[{'op.amount.asset_id':asset },{'op.amount_to_sell.asset_id':asset},{'op.min_to_receive.asset_id':asset},{'op.pays.asset_id':asset},{'op.receives.asset_id':asset}] }).sort([('bulk.block_data.block_num',-1)] \
+                ).limit(limit_).skip(skip_))
+            else:
+                j = list (db.account_history.find({'bulk.account_history.account':account,'bulk.operation_type':op_type_id, 'bulk.block_data.block_time':{'$gte':start, '$lte':end}}).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
+        else:
+            if asset != 'null':
+                j = list (db.account_history.find({'bulk.account_history.account':account, 'bulk.block_data.block_time':{'$gte':start, '$lte':end}, \
+                '$or':[{'op.amount.asset_id':asset },{'op.amount_to_sell.asset_id':asset},{'op.min_to_receive.asset_id':asset},{'op.pays.asset_id':asset},{'op.receives.asset_id':asset}]  }).sort([('bulk.block_data.block_num',-1)] \
+                ).limit(limit_).skip(skip_))
+            else:
+                j = list (db.account_history.find({'bulk.account_history.account':account, 'bulk.block_data.block_time':{'$gte':start, '$lte':end}}).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
+    elif start == 'null' and end == 'null':
+        if op_type_id != -1:
+            if asset != 'null':
+                j = list (db.account_history.find({'bulk.account_history.account':account,'bulk.operation_type':op_type_id, '$or':[{'op.amount.asset_id':asset },{'op.amount_to_sell.asset_id':asset},{'op.min_to_receive.asset_id':asset},{'op.pays.asset_id':asset},{'op.receives.asset_id':asset}] }).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
+            else:
+                j = list (db.account_history.find({'bulk.account_history.account':account,'bulk.operation_type':op_type_id }).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
+        else:
+            if asset != 'null':
+                j = list (db.account_history.find({'bulk.account_history.account':account, '$or':[{'op.amount.asset_id':asset },{'op.amount_to_sell.asset_id':asset},{'op.min_to_receive.asset_id':asset},{'op.pays.asset_id':asset},{'op.receives.asset_id':asset}] }).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
+            else:
+                j = list (db.account_history.find({'bulk.account_history.account':account }).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
+        
+    results = [0 for x in range(len(j))]
+    for n in range(0, len(j)):
+        results[n] = {"op": [j[n]['bulk']['operation_type'],j[n]["op"]],
+                      "block_num": j[n]['bulk']["block_data"]["block_num"],
+                      "id": j[n]['bulk']["account_history"]["operation_id"],
+                      "timestamp": j[n]['bulk']["block_data"]["block_time"],
+		              'obj_id' : str(j[n]['_id'])
+                      }
+    return list(results)
+
+
+def get_ops_by_transfer_accountspair_mongo(acct_from , acct_to, page, limit):
+    page = int(page)
+    limit_ = int(limit)
+    skip_ = page * limit_
+    if acct_from != 'null' and acct_to != 'null':
+        j = list(db.account_history.find({'bulk.account_history.account':acct_from, 'bulk.operation_type':0, 'op.to':acct_to}).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
+    elif acct_from != 'null':
+        j = list(db.account_history.find({'bulk.account_history.account':acct_from, 'bulk.operation_type':0, 'op.from':acct_from}).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
+    elif acct_to != 'null':
+        j = list(db.account_history.find({'bulk.account_history.account':acct_to, 'bulk.operation_type':0, 'op.to':acct_to}).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
+    else:
+        j = []
+    results = [0 for x in range(len(j))]
+    for n in range(0, len(j)):
+        results[n] = {"op": [j[n]['bulk']['operation_type'],j[n]["op"]],
+                      "block_num": j[n]['bulk']["block_data"]["block_num"],
+                      "id": j[n]['bulk']["account_history"]["operation_id"],
+                      "timestamp": j[n]['bulk']["block_data"]["block_time"],
+		              'obj_id' : str(j[n]['_id']) }
+    return list(results)
 
 def get_operation_full_mongo(operation_id):
-    res = list(db.account_history.find({'account_history.operation_id':operation_id}).limit(1))
+    res = list(db.account_history.find({'bulk.account_history.operation_id':operation_id}).limit(1))
+    if len(res) ==0:
+        return []
     operation = { 
         # "op": json.loads(res[0]["operation_history"]["op"]),
-        "op": res[0]["operation_history"]["op"],
-        "block_num": res[0]["block_data"]["block_num"], 
-        "op_in_trx": res[0]["operation_history"]["op_in_trx"],
-        "result": json.loads(res[0]["operation_history"]["operation_result"]), 
-        "trx_in_block": res[0]["operation_history"]["trx_in_block"],
-        "virtual_op": res[0]["operation_history"]["virtual_op"], 
-        "block_time": res[0]["block_data"]["block_time"]
+        "op": res[0]["op"],
+        "block_num": res[0]['bulk']["block_data"]["block_num"], 
+#        "op_in_trx": res[0]["operation_history"]["op_in_trx"],
+#        "result": json.loads(res[0]["operation_history"]["operation_result"]), 
+#        "trx_in_block": res[0]["operation_history"]["trx_in_block"],
+#        "virtual_op": res[0]["operation_history"]["virtual_op"], 
+        "block_time": res[0]['bulk']["block_data"]["block_time"]
     }
 
     bitshares_ws_client = bitshares_ws_client_factory.get_instance()
@@ -360,14 +422,14 @@ def get_market_chart_data(base, quote):
 
 @cache.memoize()
 def agg_op_type():
-    j = list( db.account_history.aggregate([{'$group' : {'_id' : "$operation_type", 'num_tutorial' : {'$sum' : 1}}}]))
+    j = list( db.account_history.aggregate([{'$group' : {'_id' : "$bulk.operation_type", 'num_tutorial' : {'$sum' : 1}}}]))
     # j = json.loads(contents)
     # return j
     
     results = [0 for x in range(len(j))]
     for n in range(0, len(j)):
-        results[n] = {"op_type": j[n]["id"],
-                      "num": j[n]["num_tutorial"]
+        results[n] = {"op_type": j[n]['bulk']["id"],
+                      "num": j[n]['bulk']["num_tutorial"]
                       }
     return results
 
@@ -421,8 +483,6 @@ def get_realtime_ops(obj_id, limit, direction): # direction is  $gte or $lte
     cond = {'$'+direction : ObjectId(obj_id) }
     if "lt" in direction:
     	j = list(db.account_history.find({'_id': cond }).sort([('_id',-1)] ).limit(limit))
-    	# j = list(db.account_history.find({'_id': cond }).sort([('block_data.block_num',-1)] ).limit(limit))
-    	# j = list(db.account_history.find({'_id': cond }).sort([('account_history.operation_id',-1)] ).limit(limit))
     elif "gt" in direction:
     	j = list(db.account_history.find({'_id': cond }).limit(limit_))
 	
@@ -431,14 +491,10 @@ def get_realtime_ops(obj_id, limit, direction): # direction is  $gte or $lte
     
     results = [0 for x in range(len(j))]
     for n in range(0, len(j)):
-        results[n] = {"op": json.loads(j[n]["operation_history"]["op"]),
-                      "block_num": j[n]["block_data"]["block_num"],
-                      "id": j[n]["account_history"]["operation_id"],
-                      "op_in_trx": j[n]["operation_history"]["op_in_trx"],
-                      "result": j[n]["operation_history"]["operation_result"],
-                      "timestamp": j[n]["block_data"]["block_time"],
-                      "trx_in_block": j[n]["operation_history"]["trx_in_block"],
-                      "virtual_op": j[n]["operation_history"]["virtual_op"]
+        results[n] = {"op": [j[n]['bulk']['operation_type'],j[n]["op"]],
+                      "block_num": j[n]['bulk']["block_data"]["block_num"],
+                      "id": j[n]['bulk']["account_history"]["operation_id"],
+                      "timestamp": j[n]['bulk']["block_data"]["block_time"]
                       }
 
     return list(results)
@@ -446,7 +502,7 @@ def get_realtime_ops(obj_id, limit, direction): # direction is  $gte or $lte
 
 def get_account_history_pager_mongo_count(account_id ):
     account_id = get_account_id(account_id)
-    res = db.account_history.find({'account_history.account':account_id}).count()
+    res = db.account_history.find({'bulk.account_history.account':account_id}).count()
     return res
 
 @cache.memoize(timeout= 1 )    
@@ -454,18 +510,13 @@ def get_realtime_pager_mongo(page, limit ):
     limit_ = int(limit)
     from_ = int(page) * limit
     # j = list(db.account_history.find().sort([('_id',-1)] ).limit(limit_))
-    j = list(db.account_history.find().sort([('block_data.block_num',-1)] ).limit(limit_))
-    # j = list(db.account_history.find().sort([('account_history.operation_id',-1)] ).limit(limit_))
+    j = list(db.account_history.find().sort([('bulk.block_data.block_num',-1)] ).limit(limit_))
     results = [0 for x in range(len(j))]
     for n in range(0, len(j)):
-        results[n] = {"op": json.loads(j[n]["operation_history"]["op"]),
-                      "block_num": j[n]["block_data"]["block_num"],
-                      "id": j[n]["account_history"]["operation_id"],
-                      "op_in_trx": j[n]["operation_history"]["op_in_trx"],
-                      "result": j[n]["operation_history"]["operation_result"],
-                      "timestamp": j[n]["block_data"]["block_time"],
-                      "trx_in_block": j[n]["operation_history"]["trx_in_block"],
-                      "virtual_op": j[n]["operation_history"]["virtual_op"],
+        results[n] = {"op": [j[n]['bulk']['operation_type'], j[n]["op"] ],
+                      "block_num": j[n]['bulk']["block_data"]["block_num"],
+                      "id": j[n]['bulk']["account_history"]["operation_id"],
+                      "timestamp": j[n]['bulk']["block_data"]["block_time"],
 		      'obj_id' : str(j[n]['_id'])
                       }
     return list(results)
@@ -482,20 +533,16 @@ def get_account_history_pager_mongo(account_id, page, limit ):
 	    return {}
     # logging.info("request: " + account_id + " ;" + str(from_) + " ;" + str(limit_) + " ;" + str(total))
     # account_id = get_account_id(account_id)
-    j = list(db.account_history.find({'account_history.account':account_id}).sort([('block_data.block_num',-1)] ).skip(from_).limit(limit_))
-    # j = list(db.account_history.find({'account_history.account':account_id}).skip(from_).limit(limit_))
+    j = list(db.account_history.find({'bulk.account_history.account':account_id}).sort([('bulk.block_data.block_num',-1)] ).skip(from_).limit(limit_))
+    # j = list(db.account_history.find({'bulk.account_history.account':account_id}).skip(from_).limit(limit_))
     logging.info("mongo req done: " + account_id + " ;" + str(page) + " ;" + str(limit))
     results = [0 for x in range(len(j))]
     llen = len(j) -  1
     for n in range(0, len(j)):
-        results[ n] = {"op": json.loads(j[n]["operation_history"]["op"]),
-                      "block_num": j[n]["block_data"]["block_num"],
-                      "id": j[n]["account_history"]["operation_id"],
-                      "op_in_trx": j[n]["operation_history"]["op_in_trx"],
-                      "result": j[n]["operation_history"]["operation_result"],
-                      "timestamp": j[n]["block_data"]["block_time"],
-                      "trx_in_block": j[n]["operation_history"]["trx_in_block"],
-                      "virtual_op": j[n]["operation_history"]["virtual_op"]
+        results[ n] = {"op": [j[n]['bulk']['operation_type'],j[n]["op"]],
+                      "block_num": j[n]['bulk']["block_data"]["block_num"],
+                      "id": j[n]['bulk']["account_history"]["operation_id"],
+                      "timestamp": j[n]['bulk']["block_data"]["block_time"]
                       }
 
     return list(results)
