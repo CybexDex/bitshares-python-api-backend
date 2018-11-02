@@ -7,7 +7,7 @@ from services.cache import cache
 import config
 import logging
 from pymongo import MongoClient
-import json, q
+import json
 from bson import json_util
 from bson.objectid import ObjectId
 
@@ -106,6 +106,88 @@ def get_trx(trx_id):
     return list(results)
 
 
+def get_order_mongo(account, order_id, optype):
+    if optype == 'null':
+        j = list(db.account_history.find({'$or':[{'op.seller':account,'result.1':order_id}, {'op.order':order_id}, {'op.order_id':order_id} ] }).sort([('bulk.block_data.block_time',1)]) )
+    elif optype == 'create':
+        j = list(db.account_history.find({ 'op.seller':account,'result.1':order_id }))
+    elif optype == 'cancel':
+        j = list(db.account_history.find({ "op.order" :order_id }))
+    elif optype == 'fill':
+        j = list(db.account_history.find({ 'op.order_id':order_id }))
+    else:
+        return []
+    results = [0 for x in range(len(j))]
+    for n in range(0, len(j)):
+        results[n] = {"op": [j[n]['bulk']['operation_type'],j[n]["op"]],
+            "block_num": j[n]['bulk']["block_data"]["block_num"],
+           "id": j[n]['bulk']["account_history"]["operation_id"],
+           "order_id": order_id,
+           "timestamp": j[n]['bulk']["block_data"]["block_time"],
+           'obj_id' : str(j[n]['_id'])
+           }           
+    return list(results)  
+
+
+
+def get_ops_fill_pair(account,start, end, base, quote, limit, page):
+    page = int(page)
+    limit_ = int(limit)
+    skip_ = page * limit_
+    if start != 'null' and end != 'null':
+        if base == 'null':
+            if quote == 'null':
+                j = list (db.account_history.find({'bulk.account_history.account':account, 'bulk.block_data.block_time':{'$gte':start, '$lte':end},'bulk.operation_type':4 }).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
+            else:
+                return []
+        elif quote == 'null':
+            return []
+        else:    
+            j = list (db.account_history.find({'bulk.account_history.account':account, 'bulk.block_data.block_time':{'$gte':start, '$lte':end}, '$or':[{'op.fill_price.base.asset_id':base,'op.fill_price.quote.asset_id':quote}, {'op.fill_price.base.asset_id': quote,'op.fill_price.quote.asset_id': base}] }).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
+    elif start == 'null' and end == 'null':
+        if base == 'null':
+            if quote == 'null':
+                j = list (db.account_history.find({'bulk.account_history.account':account, 'bulk.operation_type':4 }).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
+            else:
+                return []
+        elif quote == 'null':
+            return []
+        else:    
+            j = list (db.account_history.find({'bulk.account_history.account':account, '$or':[{'op.fill_price.base.asset_id':base,'op.fill_price.quote.asset_id':quote},{'op.fill_price.base.asset_id':quote ,'op.fill_price.quote.asset_id':base}] }).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
+    
+    elif start != 'null' and end == 'null': 
+        if base == 'null':
+            if quote == 'null':
+                j = list (db.account_history.find({'bulk.account_history.account':account, 'bulk.block_data.block_time':{'$gte':start},'bulk.operation_type':4 }).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
+            else:
+                return []
+        elif quote == 'null':
+            return []
+        else:    
+            j = list (db.account_history.find({'bulk.account_history.account':account, 'bulk.block_data.block_time':{'$gte':start}, '$or':[{'op.fill_price.base.asset_id':base,'op.fill_price.quote.asset_id':quote },{'op.fill_price.base.asset_id':quote ,'op.fill_price.quote.asset_id':base}]}).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
+ 
+    elif start == 'null' and end != 'null':
+        if base == 'null':
+            if quote == 'null':
+                j = list (db.account_history.find({'bulk.account_history.account':account, 'bulk.block_data.block_time':{'$lte':end},'bulk.operation_type':4 }).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
+            else:
+                return []
+        elif quote == 'null':
+            return []
+        else:    
+            j = list (db.account_history.find({'bulk.account_history.account':account, 'bulk.block_data.block_time':{'$lte':end}, '$or':[{'op.fill_price.base.asset_id':base,'op.fill_price.quote.asset_id':quote},{'op.fill_price.base.asset_id':quote ,'op.fill_price.quote.asset_id':base}] }).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
+    results = [0 for x in range(len(j))]
+    for n in range(0, len(j)):
+        results[n] = {"op": [j[n]['bulk']['operation_type'],j[n]["op"]],
+                      "block_num": j[n]['bulk']["block_data"]["block_num"],
+                      "id": j[n]['bulk']["account_history"]["operation_id"],
+                      "timestamp": j[n]['bulk']["block_data"]["block_time"],
+		              'obj_id' : str(j[n]['_id'])
+                      }
+    return list(results)
+
+
+
 def get_ops_conds_mongo(account,start, end, op_type_id, asset, limit, page):
     page = int(page)
     limit_ = int(limit)
@@ -125,6 +207,36 @@ def get_ops_conds_mongo(account,start, end, op_type_id, asset, limit, page):
                 ).limit(limit_).skip(skip_))
             else:
                 j = list (db.account_history.find({'bulk.account_history.account':account, 'bulk.block_data.block_time':{'$gte':start, '$lte':end}}).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
+    elif start == 'null' and end != 'null':
+        if op_type_id != -1:
+            if asset != 'null':
+                j = list (db.account_history.find({'bulk.account_history.account':account,'bulk.operation_type':op_type_id, 'bulk.block_data.block_time':{ '$lte':end},\
+                 '$or':[{'op.amount.asset_id':asset },{'op.amount_to_sell.asset_id':asset},{'op.min_to_receive.asset_id':asset},{'op.pays.asset_id':asset},{'op.receives.asset_id':asset}] }).sort([('bulk.block_data.block_num',-1)] \
+                ).limit(limit_).skip(skip_))
+            else:
+                j = list (db.account_history.find({'bulk.account_history.account':account,'bulk.operation_type':op_type_id, 'bulk.block_data.block_time':{ '$lte':end}}).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
+        else:
+            if asset != 'null':
+                j = list (db.account_history.find({'bulk.account_history.account':account, 'bulk.block_data.block_time':{ '$lte':end}, \
+                '$or':[{'op.amount.asset_id':asset },{'op.amount_to_sell.asset_id':asset},{'op.min_to_receive.asset_id':asset},{'op.pays.asset_id':asset},{'op.receives.asset_id':asset}]  }).sort([('bulk.block_data.block_num',-1)] \
+                ).limit(limit_).skip(skip_))
+            else:
+                j = list (db.account_history.find({'bulk.account_history.account':account, 'bulk.block_data.block_time':{'$lte':end}}).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
+    elif start != 'null' and end == 'null':
+        if op_type_id != -1:
+            if asset != 'null':
+                j = list (db.account_history.find({'bulk.account_history.account':account,'bulk.operation_type':op_type_id, 'bulk.block_data.block_time':{ '$gte':start},\
+                 '$or':[{'op.amount.asset_id':asset },{'op.amount_to_sell.asset_id':asset},{'op.min_to_receive.asset_id':asset},{'op.pays.asset_id':asset},{'op.receives.asset_id':asset}] }).sort([('bulk.block_data.block_num',-1)] \
+                ).limit(limit_).skip(skip_))
+            else:
+                j = list (db.account_history.find({'bulk.account_history.account':account,'bulk.operation_type':op_type_id, 'bulk.block_data.block_time':{ '$gte':start}}).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
+        else:
+            if asset != 'null':
+                j = list (db.account_history.find({'bulk.account_history.account':account, 'bulk.block_data.block_time':{ '$gte':start}, \
+                '$or':[{'op.amount.asset_id':asset },{'op.amount_to_sell.asset_id':asset},{'op.min_to_receive.asset_id':asset},{'op.pays.asset_id':asset},{'op.receives.asset_id':asset}]  }).sort([('bulk.block_data.block_num',-1)] \
+                ).limit(limit_).skip(skip_))
+            else:
+                j = list (db.account_history.find({'bulk.account_history.account':account, 'bulk.block_data.block_time':{'$gte':start}}).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
     elif start == 'null' and end == 'null':
         if op_type_id != -1:
             if asset != 'null':

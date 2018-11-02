@@ -1,6 +1,7 @@
 from websocket import create_connection
 import json
 from services.cache import cache
+import logging
 
 class RPCError(Exception):
     pass
@@ -26,6 +27,7 @@ class BitsharesWebsocketClient():
             ]
         }
         request_string = json.dumps(payload) 
+        logging.info('> {}'.format(request_string))
         #print('> {}'.format(request_string))
 	try:
             self.ws.send(request_string)
