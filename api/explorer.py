@@ -10,6 +10,8 @@ from pymongo import MongoClient
 import json
 from bson import json_util
 from bson.objectid import ObjectId
+import q,traceback
+
 
 logging.basicConfig(level=logging.DEBUG,
                 format='%(asctime)s %(filename)s[line:%(lineno)d] %(levelname)s %(message)s',
@@ -22,8 +24,64 @@ db = client[config.MONGODB_DB_NAME]
 
 logging.info(config.MONGODB_DB_URL)
 logging.info(config.MONGODB_DB_NAME)
-# qconn = q.q(host = config.Q_HOST, port = Q_PORT, user = Q_USER)
+# qconn = q.q(host = config.Q_HOST, port = config.Q_PORT, user = config.Q_USER)
+###################### Q functions ######################
 
+@cache.memoize(timeout= 5 )    
+def statistic_rank_pair_top(duration, side, ttype, baseAsset, quoteAsset):
+    qconn = q.q(host = config.Q_HOST, port = config.Q_PORT, user = config.Q_USER)
+    if duration not in (1,12,24):
+        return []
+    duration = str(duration)
+    if side not in ('sell', 'buy'):
+        return []
+    if ttype not in ('net',''):
+        return []
+    tbname = '_'.join(['top','pair',ttype,side,duration]).replace('__','_')
+    if baseAsset != 'null' and quoteAsset != 'null':
+        sql = 'trade[%s];select from %s where (basset=`%s ) and (qasset = `%s) ' % (duration, tbname, baseAsset, quoteAsset) 
+    else:
+        sql = 'trade[%s];select from %s' % (duration, tbname)
+    try:
+        res = qconn.k(str(sql))
+    except:
+        logging.error(traceback.format_exc())
+        logging.error(sql)
+        try:
+            qconn.k('reset_conn[h]')
+        except:
+            logging.error('failed to reset conn with 9008')
+    qconn.close()
+    return map(lambda x: {'basset':x[0],'qasset':x[1],'account':x[2],'amount':x[3]},list(res))
+
+
+
+@cache.memoize(timeout= 5 )    
+def statistic_rank_top(duration, side, ttype, asset):
+    qconn = q.q(host = config.Q_HOST, port = config.Q_PORT, user = config.Q_USER)
+    if duration not in (1,12,24):
+        return []
+    duration = str(duration)
+    if side not in ('sell', 'buy'):
+        return []
+    if ttype not in ('net',''):
+        return []
+    tbname = '_'.join(['top',ttype,side,duration]).replace('__','_')
+    if asset != 'null':
+        sql = 'trade[%s];select from %s where asset=`%s' % (duration, tbname,asset) 
+    else:
+        sql = 'trade[%s];select from %s' % (duration, tbname)
+    try:
+        res = qconn.k(str(sql))
+    except:
+        logging.error(traceback.format_exc())
+        logging.error(sql)
+    qconn.close()
+    return map(lambda x: {'asset':x[0],'account':x[1],'amount':x[2]},list(res))
+
+
+
+@cache.memoize(timeout= 3 )    
 def get_header():
     bitshares_ws_client = bitshares_ws_client_factory.get_instance()
     response = bitshares_ws_client.request('database', 'get_dynamic_global_properties', [])
@@ -188,6 +246,7 @@ def get_ops_fill_pair(account,start, end, base, quote, limit, page):
 
 
 
+@cache.memoize(timeout= 3 )    
 def get_ops_conds_mongo(account,start, end, op_type_id, asset, limit, page):
     page = int(page)
     limit_ = int(limit)
@@ -260,6 +319,7 @@ def get_ops_conds_mongo(account,start, end, op_type_id, asset, limit, page):
     return list(results)
 
 
+@cache.memoize(timeout= 3 )    
 def get_ops_by_transfer_accountspair_mongo(acct_from , acct_to, page, limit):
     page = int(page)
     limit_ = int(limit)
@@ -617,7 +677,7 @@ def get_account_history_pager_mongo_count(account_id ):
     res = db.account_history.find({'bulk.account_history.account':account_id}).count()
     return res
 
-@cache.memoize(timeout= 1 )    
+@cache.memoize(timeout= 2 )    
 def get_realtime_pager_mongo(page, limit ):
     limit_ = int(limit)
     from_ = int(page) * limit
@@ -633,6 +693,7 @@ def get_realtime_pager_mongo(page, limit ):
                       }
     return list(results)
 
+@cache.memoize(timeout= 3 )    
 def get_account_history_pager_mongo(account_id, page, limit ):
     # total = get_account_history_pager_mongo_count(account_id)
     limit_ = int(limit)

@@ -1,9 +1,10 @@
 import os
 
 # qconn = q.q(host = 'localhost', port = 8083, user = 'sunqi')
-Q_HOST = os.environ.get('Q_HOST_ADDR','localhost')
-Q_PORT = os.environ.get('Q_PORT', 8083)
-Q_USER= os.environ.get('Q_USER', 'sunqi')
+# Q_HOST = os.environ.get('Q_HOST_ADDR','localhost')
+Q_HOST = os.environ.get('Q_HOST_ADDR','39.105.55.115')
+Q_PORT = os.environ.get('Q_PORT', 9005)
+Q_USER= os.environ.get('Q_USER', 'sunqi:sunqi123')
 
 
 # WEBSOCKET_URL = os.environ.get('WEBSOCKET_URL', "wss://shanghai.51nebula.com/")

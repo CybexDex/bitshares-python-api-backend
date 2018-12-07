@@ -9,6 +9,87 @@ schemes:
 produces:
   - application/json
 paths:
+  "/statistic_rank_top":
+    get:
+      description: Get statistic_rank_top with duration('24','12','1'), side in ('sell','buy'), ttype in ('net','') and asset id
+      operationId: api.explorer.statistic_rank_top
+      parameters:
+        - in: query
+          name: duration
+          default: 1
+          type: integer
+          required: true
+          description: duration
+        - in: query
+          name: side
+          default: sell
+          type: string
+          required: true
+          description: sell or buy 
+        - in: query
+          name: ttype
+          default: net
+          type: string
+          required: true
+          description: net or non-net('')
+        - in: query
+          name: asset
+          default: 1.3.2
+          type: string
+          required: true
+          description: as full
+      responses:
+        '200':
+          description: Array of operation data
+        '500':
+          description: Error processing parameters
+      tags:
+        - api
+        - blockchain
+  "/statistic_rank_pair_top":
+    get:
+      description: Get statistic_rank_pair_top with duration('24','12','1'), side in ('sell','buy'), ttype in ('net','') and asset id
+      operationId: api.explorer.statistic_rank_pair_top
+      parameters:
+        - in: query
+          name: duration
+          default: 1
+          type: integer
+          required: true
+          description: duration
+        - in: query
+          name: side
+          default: sell
+          type: string
+          required: true
+          description: sell or buy 
+        - in: query
+          name: ttype
+          default: net
+          type: string
+          required: true
+          description: net or non-net('')
+        - in: query
+          name: baseAsset
+          default: 1.3.2
+          type: string
+          required: true
+          description: as full
+        - in: query
+          name: quoteAsset
+          default: 1.3.3
+          type: string
+          required: true
+          description: as full
+      responses:
+        '200':
+          description: Array of operation data
+        '500':
+          description: Error processing parameters
+      tags:
+        - api
+        - blockchain
+ 
   "/header":
     get:
       description: Get some blockchain information.
