@@ -188,6 +188,7 @@ def get_order_mongo(account, order_id, optype):
 
 
 
+@cache.memoize(timeout= 5 )    
 def get_ops_fill_pair(account,start, end, base, quote, limit, page):
     page = int(page)
     limit_ = int(limit)
@@ -733,9 +734,9 @@ def get_call_orders(asset_id):
     return call_orders
 
 
-def get_settle_orders(base, quote):
+def get_settle_orders(asset, limit):
     bitshares_ws_client = bitshares_ws_client_factory.get_instance()
-    settle_orders = bitshares_ws_client.request('database', 'get_settle_orders', [base, quote, 100])
+    settle_orders = bitshares_ws_client.request('database', 'get_settle_orders', [asset, limit])
     return settle_orders
 
 

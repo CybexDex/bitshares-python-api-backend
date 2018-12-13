@@ -993,17 +993,17 @@ paths:
       operationId: api.explorer.get_settle_orders
       parameters:
         - in: query
-          name: base
-          default: 1.3.0
+          name: asset
+          default: 1.3.2
           type: string
           required: true
-          description: base asset
+          description: asset
         - in: query
-          name: quote
-          default: 0
-          type: string
+          name: limit
+          default: 10
+          type: integer
           required: true
-          description: quote asset
+          description: limit 
       responses:
         '200':
           description: open settle orders
