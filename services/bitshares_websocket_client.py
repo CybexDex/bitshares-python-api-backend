@@ -68,6 +68,9 @@ class BitsharesWebsocketClient():
     @cache.memoize()
     def get_global_properties(self):
         return self.request('database', 'get_global_properties', [])
+    def close(self):
+        self.ws.close()
+
 
 
 class BitsharesWebsocketClientFactory():
