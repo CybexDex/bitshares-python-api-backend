@@ -1,4 +1,0 @@
-pytest
-requests
-json_delta
-swagger_parser
