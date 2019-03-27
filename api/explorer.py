@@ -11,23 +11,29 @@ import json
 from bson import json_util
 from bson.objectid import ObjectId
 import q,traceback
+from logging.handlers import TimedRotatingFileHandler
 
-
+is_print_date = False
 logging.basicConfig(level=logging.DEBUG,
                 format='%(asctime)s %(filename)s[line:%(lineno)d] %(levelname)s %(message)s',
                 datefmt='%a, %d %b %Y %H:%M:%S',
-                filename='mydebug.log',
+                filename='/tmp/log/mydebug.log',
                 filemode='w')
+logHandler = TimedRotatingFileHandler(filename = '/tmp/log/log.log', when = 'D', interval = 1, encoding='utf-8')
+logger = logging.getLogger('logger')
+formatter = logging.Formatter('%(asctime)s %(filename)s[line:%(lineno)d] %(levelname)s %(message)s')
+logHandler.setFormatter(formatter)
+logger.addHandler(logHandler)
+
 
 client = MongoClient(config.MONGODB_DB_URL)
 db = client[config.MONGODB_DB_NAME]
-
-logging.info(config.MONGODB_DB_URL)
-logging.info(config.MONGODB_DB_NAME)
+logger.info(config.MONGODB_DB_URL)
+logger.info(config.MONGODB_DB_NAME)
 # qconn = q.q(host = config.Q_HOST, port = config.Q_PORT, user = config.Q_USER)
 ###################### Q functions ######################
 
-@cache.memoize(timeout= 5 )    
+@cache.memoize(timeout= 600 )    
 def statistic_rank_pair_top(duration, side, ttype, baseAsset, quoteAsset):
     qconn = q.q(host = config.Q_HOST, port = config.Q_PORT, user = config.Q_USER)
     if duration not in (1,12,24):
@@ -45,18 +51,20 @@ def statistic_rank_pair_top(duration, side, ttype, baseAsset, quoteAsset):
     try:
         res = qconn.k(str(sql))
     except:
-        logging.error(traceback.format_exc())
-        logging.error(sql)
-        try:
-            qconn.k('reset_conn[h]')
-        except:
-            logging.error('failed to reset conn with 9008')
+        res = []
+        logger.error(traceback.format_exc())
+        logger.error(sql)
     qconn.close()
-    return map(lambda x: {'basset':x[0],'qasset':x[1],'account':x[2],'amount':x[3]},list(res))
+    try:
+        return map(lambda x: {'basset':x[0],'qasset':x[1],'account':x[2],'amount':x[3]},list(res))
+    except:
+        logger.error(sql)
+        logger.error(res)
+        return ['error']
 
 
 
-@cache.memoize(timeout= 5 )    
+@cache.memoize(timeout= 600 )    
 def statistic_rank_top(duration, side, ttype, asset):
     qconn = q.q(host = config.Q_HOST, port = config.Q_PORT, user = config.Q_USER)
     if duration not in (1,12,24):
@@ -74,8 +82,9 @@ def statistic_rank_top(duration, side, ttype, asset):
     try:
         res = qconn.k(str(sql))
     except:
-        logging.error(traceback.format_exc())
-        logging.error(sql)
+        res = []
+        logger.error(traceback.format_exc())
+        logger.error(sql)
     qconn.close()
     return map(lambda x: {'asset':x[0],'account':x[1],'amount':x[2]},list(res))
 
@@ -85,11 +94,227 @@ def statistic_rank_top(duration, side, ttype, asset):
 def get_header():
     bitshares_ws_client = bitshares_ws_client_factory.get_instance()
     response = bitshares_ws_client.request('database', 'get_dynamic_global_properties', [])
-    return _add_global_informations(response, bitshares_ws_client)
+    res = _add_global_informations(response, bitshares_ws_client)
+    bitshares_ws_client.close()
+    return res
+
+def get_balance(address):
+    bitshares_ws_client = bitshares_ws_client_factory.get_instance()
+    res = bitshares_ws_client.request('database', 'get_balance_objects', [[address]])
+    bitshares_ws_client.close()
+    return res
+
+
+def get_account_count():
+    bitshares_ws_client = bitshares_ws_client_factory.get_instance()
+    res = bitshares_ws_client.request('database', 'get_account_count', [])
+    bitshares_ws_client.close()
+    return res
+
+@cache.memoize(timeout= 3600 * 12 )    
+def get_asset_create_num():
+    head = get_header()
+    start = datetime.datetime.strptime(head['time'][:10] ,'%Y-%m-%d' ) 
+    j = db.account_history.find({'bulk.block_data.block_time':{'$gte':str(start)[:10] }, 'bulk.operation_type':10}).count()
+    bitshares_ws_client = bitshares_ws_client_factory.get_instance()
+    start_sym = ""
+    asset_total_num = 1
+    while 1:
+        asl = bitshares_ws_client.request('database', 'list_assets', [start_sym,100])
+        i = len(asl)
+        asset_total_num += i - 1
+        start_sym = asl[-1]['symbol']
+        if i < 100 :
+            break
+    # asset_total_num = len(bitshares_ws_client.request('database', 'list_assets', ["",100]))
+    bitshares_ws_client.close()
+    return asset_total_num - j 
+
+@cache.memoize(timeout= 60)    
+def get_asset_create_num_24h():
+    # j = db.account_history.find({'bulk.block_data.block_time':{'$gte':str(start)[:10] , '$lt': str(end)[:10]}, 'bulk.operation_type':10}).count()
+    try:
+        # j = list( db.daily.find().sort([('block_date',-1)]).limit(1) )
+        res = list(db.daily.find({}).sort([('block_date',-1)]).limit(1))[0]
+        if is_print_date is False:
+            return res['asset_create_num']
+        j = {}
+        j['asset_create_num'] = res['asset_create_num']
+        j['block_date'] = res['block_date']
+    except:
+        try:
+            j = db.account_history.find({'bulk.block_data.block_time':{'$gte':str(datetime.datetime.utcnow())[:10]}, 'bulk.operation_type':10}).count()
+        except:
+            return []
+    return j
+@cache.memoize(timeout= 600)    
+def get_ordercreate_num_24h():
+    try:
+        res = list(db.daily.find({}).sort([('block_date',-1)]).limit(1))[0]
+        if is_print_date is False:
+            return res['order_create_num']
+        j = {}
+        j['order_create_num'] = res['order_create_num']
+        j['block_date'] = res['block_date']
+    except:
+        j = {}
+    return j
+@cache.memoize(timeout= 3600 * 12 )    
+def get_ordercreate_account_num_24h():
+    try:
+        res = list(db.daily.find({}).sort([('block_date',-1)]).limit(1))[0]
+        if is_print_date is False:
+            return max(len(res.get('order_create_account_list', [])), res.get('order_create_account_num',0))
+        j = {}
+        j['order_create_account_num'] = max(len(res.get('order_create_account_list', [])), res.get('order_create_account_num',0))
+        j['block_date'] = res['block_date']
+    except:
+        j = {}
+    return j
+
+@cache.memoize(timeout= 60 )    
+def get_asset_turnover_24h():
+    qconn = q.q(host = config.Q_HOST, port = config.Q_PORT, user = config.Q_USER)   
+    sql = 'trade[24];turnover_24h[]'
+    try:
+        res = qconn.k(sql)
+    except:
+        res = []
+        logger.error('error when ' + sql)
+    qconn.close()
+    asset_ids= map(lambda x: x[0],list(res))
+    asset_amounts = map(lambda x: float(x[1]) , list(res))
+    _supllies = _get_assets_supply(asset_ids)
+    _res = zip(asset_ids,asset_amounts,_supllies)
+    _res = filter(lambda x : x[2] > 0 , _res)
+    logger.info(_res)
+    return map(lambda x: {'asset_id':x[0], 'to_rate':x[1] / x[2]}, _res )
+
+@cache.memoize(timeout= 60 )    
+def get_asset_turnover_24h_single(asset_id):
+    qconn = q.q(host = config.Q_HOST, port = config.Q_PORT, user = config.Q_USER)   
+    sql = 'trade[24];turnover_24h_s[`%s]' % (asset_id)
+    try:
+        res = qconn.k(str(sql))
+    except:
+        res = []
+        logger.error('error when ' + sql)
+    qconn.close()
+    asset_ids= map(lambda x: x[0],list(res))
+    asset_amounts = map(lambda x: float(x[1]) , list(res))
+    _supllies = _get_assets_supply(asset_ids)
+    _res = zip(asset_ids,asset_amounts,_supllies)
+    return map(lambda x: {'asset_id':x[0], 'to_rate':x[1] / x[2]}, _res )
+
+
+
+@cache.memoize(timeout= 60 )    
+def get_fill_cap_24h():
+    qconn = q.q(host = config.Q_HOST, port = config.Q_PORT, user = config.Q_USER)   
+    sql = 'trade[24];turnover_24h[]'
+    try:
+        res = qconn.k(sql)
+    except:
+        res = []
+        logger.error('error when ' + sql)
+    qconn.close()
+    return list(res)
+
+@cache.memoize(timeout= 3600 )    
+def get_fill_cap_day(date):
+    try:
+        res = list(db.daily.find({'block_date':date}).limit(1))[0]
+        j = {}
+        to_ = {}
+        for k,v in  res['turnover'].items():
+            k_ = '1.3.' + k
+            to_[k_] = v
+        j['turnover'] = to_
+        j['block_date'] = res['block_date']
+    except:
+        logger.error('invalid param date_, format must be %Y-%m-%d')
+        return "invalid param date_, format must be %Y-%m-%d"
+    # j = list(db.account_history.aggregate([{'$match':{'bulk.operation_type':4, 'bulk.block_data.block_time':{'$gte': start ,'$lt': end }}},{ '$group' : {'_id':'$op.pays.asset_id', 'count':{'$sum': '$op.pays.amount' }}}]))
+    return j
+
+@cache.memoize(timeout= 3600 )    
+def get_fill_cap_day_timepoint(date):
+    try:
+        d = datetime.datetime.strptime(date,'%Y-%m-%dT%H:%M:%S')
+        start = date
+        end = (d + datetime.timedelta(1,0,0)).strftime('%Y-%m-%dT%H:%M:%S')
+    except:
+        logger.error('invalid param date_, format must be %Y-%m-%dT%H:%M:%S')
+        return "invalid param date_, format must be %Y-%m-%dT%H:%M:%S"
+    j = list(db.account_history.aggregate([{'$match':{'bulk.operation_type':4, 'bulk.block_data.block_time':{'$gte': start ,'$lt': end }}},{ '$group' : {'_id':'$op.pays.asset_id', 'count':{'$sum': '$op.pays.amount' }}}]))
+    # j = list(db.account_history.aggregate([{'$match':{'bulk.operation_type':4, 'bulk.block_data.block_time':{'$gte': start ,'$lt': end }}},{ '$group' : {'_id':'$op.pays.asset_id', 'pays':{'$sum': '$op.pays.amount' }, 'receives':{'$sum': '$op.receives.amount' }}}]))
+    return j
+    # return list(map(lambda x: {'_id':x['_id'],'count':x['pays']+x['receives']}, j))
+    # j = list(db.account_history.aggregate([{'$match':{'bulk.operation_type':4, 'bulk.block_data.block_time':{'$gte': start ,'$lt': end }}},{ '$group' : {'_id':'$op.pays.asset_id', 'count':{'$sum':  '$op.receives.amount' }}}]))
+@cache.memoize(timeout= 60 )    
+def get_fill_count_day(date):
+    try:
+        res = list(db.daily.find({'block_date':date}).limit(1))[0]
+        if is_print_date is False:
+            return res['fill_order_num'] / 2
+        j = {}
+        j['fill_order_num'] = res['fill_order_num'] / 2
+        j['block_date'] = res['block_date']
+    except:
+        try:
+            j = db.account_history.find({'bulk.operation_type':4, 'bulk.block_data.block_time':{'$gte': date } }).count() / 2
+        except:
+            logger.error('invalid param date_, format must be %Y-%m-%d and in the range')
+            return "invalid param date_, format must be %Y-%m-%d and in the range"
+    # j = db.account_history.find({'bulk.operation_type':4, 'bulk.block_data.block_time':{'$gte': start ,'$lt': end } }).count() / 2
+    return j
+ 
+
+@cache.memoize(timeout= 60 )    
+def get_fill_count_24h():
+    qconn = q.q(host = config.Q_HOST, port = config.Q_PORT, user = config.Q_USER)   
+    sql = 'trade[24];fill_count[]'
+    try:
+        res = qconn.k(sql)
+    except:
+        res = []
+        logger.error('error when ' + sql)
+    qconn.close()
+    return res
+
+@cache.memoize(timeout= 3600 )    
+def get_account_count_24h():
+    try:
+        res = list(db.daily.find().sort([('block_date',-1)]).limit(1))[0]
+        if is_print_date is False:
+            return res['create_acct_num'] / 2
+        j = {}
+        j['create_acct_num'] = res['create_acct_num'] / 2
+        j['block_date'] = res['block_date']
+    except:
+        logger.error('invalid param date_, format must be %Y-%m-%d and in the range')
+    # j = db.account_history.find({'bulk.block_data.block_time':{'$gte':str(start)[:10],'$lt':str(end)[:10]}, 'bulk.operation_type':5}).count() / 2 
+    return j
+
 
 def get_account(account_id):
     bitshares_ws_client = bitshares_ws_client_factory.get_instance()
-    return bitshares_ws_client.request('database', 'get_accounts', [[account_id]])
+    res = bitshares_ws_client.request('database', 'get_accounts', [[account_id]])
+    bitshares_ws_client.close()
+    return res
+
+@cache.memoize(timeout= 3)    
+def get_account_count_days_store(num):
+    res = list(db.daily.find().sort([('block_date',-1)]).limit(num))
+    j =  list(map(lambda x:{'block_date':x['block_date'], 'create_acct_num':x['create_acct_num'] / 2},res))
+    return j
+
+
+@cache.memoize(timeout= 3)    
+def get_account_count_days(num):
+    _date = (datetime.datetime.now() - datetime.timedelta(num,0,0)).strftime('%Y-%m-%d')
+    j = list (db.account_history.aggregate([ { '$match' : { 'bulk.operation_type': 5, 'bulk.block_data.block_time':{'$gte': _date} } },  { '$group' : { '_id': {'year' : { '$year' : { '$toDate' :'$bulk.block_data.block_time'} }, 'month' : { '$month' : {'$toDate':'$bulk.block_data.block_time'} }, 'day' : { '$dayOfMonth' : { '$toDate' :'$bulk.block_data.block_time'}} } , 'count': { '$sum' : 0.5 } } } , { '$sort' :{'_id': 1} } ] ))
+    return j
 
 def get_account_name(account_id):
     account = get_account(account_id)
@@ -99,6 +324,7 @@ def get_account_id(account_name):
     bitshares_ws_client = bitshares_ws_client_factory.get_instance()
     if not _is_object(account_name):
         account = bitshares_ws_client.request('database', 'lookup_account_names', [[account_name], 0])
+        bitshares_ws_client.close()
         return account[0]['id']
     else:
         return account_name
@@ -126,7 +352,6 @@ def _add_global_informations(response, ws_client):
 def _enrich_operation(operation, ws_client):
     dynamic_global_properties = ws_client.request('database', 'get_dynamic_global_properties', [])
     operation["accounts_registered_this_interval"] = dynamic_global_properties["accounts_registered_this_interval"]
-
     return _add_global_informations(operation, ws_client)
 
 def get_operation(operation_id):
@@ -134,8 +359,9 @@ def get_operation(operation_id):
     operation = bitshares_ws_client.get_object(operation_id)
     if not operation:
         operation = {} 
-
+    
     operation = _enrich_operation(operation, bitshares_ws_client)
+    bitshares_ws_client.close()
     return [ operation ]
 
 
@@ -148,6 +374,7 @@ def get_operation_full(operation_id):
         operation = {} 
 
     operation = _enrich_operation(operation, bitshares_ws_full_client)
+    bitshares_ws_full_client.close()
     return [ operation ]
 
 
@@ -186,13 +413,182 @@ def get_order_mongo(account, order_id, optype):
            }           
     return list(results)  
 
+@cache.memoize(timeout= 5 )    
+def _get_ops_fill_pair_noaccount(start, end, base, quote, limit, page):
+    page = int(page)
+    limit_ = int(limit)
+    limit_ = _ensure_safe_limit(limit_)    
+    skip_ = page * limit_
+    if start == 'null':
+        start = '2018-01-01'
+    if end == 'null':
+        end = '2050-01-01'
+    j = list (db.account_history.find({ 'bulk.block_data.block_time':{'$gte':start, '$lte':end}, '$or':[{'op.fill_price.base.asset_id':base,'op.fill_price.quote.asset_id':quote}, {'op.fill_price.base.asset_id': quote,'op.fill_price.quote.asset_id': base}] }).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
+    c = db.account_history.find({ 'bulk.block_data.block_time':{'$gte':start, '$lte':end}, '$or':[{'op.fill_price.base.asset_id':base,'op.fill_price.quote.asset_id':quote}, {'op.fill_price.base.asset_id': quote,'op.fill_price.quote.asset_id': base}] }).count()
+    results = [0 for x in range(len(j))]
+    for n in range(0, len(j)):
+        results[n] = {"op": [j[n]['bulk']['operation_type'],j[n]["op"]],
+                      "block_num": j[n]['bulk']["block_data"]["block_num"],
+                      "id": j[n]['bulk']["account_history"]["operation_id"],
+                      "timestamp": j[n]['bulk']["block_data"]["block_time"],
+		              'obj_id' : str(j[n]['_id'])
+                      }
+    return [results, c]
+
+
+@cache.memoize(timeout= 5 )    
+def _get_ops_fill_pair_noaccount_strict(start, end, base, quote, limit, page):
+    page = int(page)
+    limit_ = int(limit)
+    limit_ = _ensure_safe_limit(limit_)    
+    skip_ = page * limit_
+    if start == 'null':
+        start = '2018-01-01'
+    if end == 'null':
+        end = '2050-01-01'
+ 
+    j = list (db.account_history.find({ 'bulk.block_data.block_time':{'$gte':start, '$lte':end}, 'op.fill_price.base.asset_id':base,'op.fill_price.quote.asset_id':quote }).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
+    c = db.account_history.find({ 'bulk.block_data.block_time':{'$gte':start, '$lte':end}, 'op.fill_price.base.asset_id':base,'op.fill_price.quote.asset_id':quote}).count()
+    results = [0 for x in range(len(j))]
+    for n in range(0, len(j)):
+        results[n] = {"op": [j[n]['bulk']['operation_type'],j[n]["op"]],
+                      "block_num": j[n]['bulk']["block_data"]["block_num"],
+                      "id": j[n]['bulk']["account_history"]["operation_id"],
+                      "timestamp": j[n]['bulk']["block_data"]["block_time"],
+		              'obj_id' : str(j[n]['_id'])
+                      }
+    return [results, c]
+
+@cache.memoize(timeout= 15 )    
+def get_fill_bypair(account,start, end, filter_in, filter_out, limit, page):
+    page = int(page)
+    limit_ = int(limit)
+    limit_ = _ensure_safe_limit(limit_)    
+    skip_ = page * limit_
+    if start == 'null':
+        start = '2018-01-01'
+    if end == 'null':
+        end = '2050-01-01'
+    if (filter_in == 'null' and filter_out == 'null') or (filter_in != 'null' and filter_out != 'null'):
+        return []
+    if filter_in != 'null':
+        if account != 'null':
+            j = list(db.account_history.find({'result.pair':{'$in':filter_in.split(',')}, 'bulk.account_history.account':account,'bulk.block_data.block_time':{'$gte':start, '$lte':end}}).sort([('bulk.block_data.block_time',-1)] ).limit(limit_).skip(skip_))
+            c = db.account_history.find({'result.pair':{'$in':filter_in.split(',')} ,'bulk.account_history.account':account,'bulk.block_data.block_time':{'$gte':start, '$lte':end}}).count()
+        else:
+            j = list(db.account_history.find({'result.pair':{'$in':filter_in.split(',')} ,'bulk.block_data.block_time':{'$gte':start, '$lte':end}}).sort([('bulk.block_data.block_time',-1)] ).limit(limit_).skip(skip_))
+            c = db.account_history.find({'result.pair':{'$in':filter_in.split(',')} ,'bulk.block_data.block_time':{'$gte':start, '$lte':end}}).count()
+    else:
+        if account == 'null':
+            j = list(db.account_history.find({'result.pair':{'$type':'string','$nin':filter_out.split(',')} ,'bulk.block_data.block_time':{'$gte':start, '$lte':end}}).sort([('bulk.block_data.block_time',-1)] ).limit(limit_).skip(skip_))
+            c = db.account_history.find({'result.pair':{'$type':'string','$nin':filter_out.split(',')} ,'bulk.block_data.block_time':{'$gte':start, '$lte':end}}).count()
+        else:
+            j = list(db.account_history.find({'result.pair':{'$type':'string','$nin':filter_out.split(',')} ,'bulk.account_history.account':account,'bulk.block_data.block_time':{'$gte':start, '$lte':end}}).sort([('bulk.block_data.block_time',-1)] ).limit(limit_).skip(skip_))
+            c = db.account_history.find({'result.pair':{'$type':'string','$nin':filter_out.split(',')} ,'bulk.account_history.account':account,'bulk.block_data.block_time':{'$gte':start, '$lte':end}}).count()
+    results = [0 for x in range(len(j))]
+    for n in range(0, len(j)):
+        results[n] = {"op": [j[n]['bulk']['operation_type'],j[n]["op"]],
+                      "block_num": j[n]['bulk']["block_data"]["block_num"],
+                      "id": j[n]['bulk']["account_history"]["operation_id"],
+                      "pair": j[n]['result']["pair"],
+                      "timestamp": j[n]['bulk']["block_data"]["block_time"],
+		              'obj_id' : str(j[n]['_id'])
+                      }
+    return [results,c]
+
+
+@cache.memoize(timeout= 5 )    
+def get_ops_fill_pair2(account,start, end, base, quote, limit, page):
+    page = int(page)
+    limit_ = int(limit)
+    limit_ = _ensure_safe_limit(limit_)    
+    skip_ = page * limit_
+
+    if start == 'null':
+        start = '2018-01-01'
+    if end == 'null':
+        end = '2050-01-01'
+ 
+    if account == "null":
+        res = _get_ops_fill_pair_noaccount(start, end, base, quote, limit, page)
+        return res
+    if start != 'null' and end != 'null':
+        if base == 'null':
+            if quote == 'null':
+                j = list (db.account_history.find({'bulk.account_history.account':account, 'bulk.block_data.block_time':{'$gte':start, '$lte':end},'bulk.operation_type':4 }).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
+                c = db.account_history.find({'bulk.account_history.account':account, 'bulk.block_data.block_time':{'$gte':start, '$lte':end},'bulk.operation_type':4 }).count()
+            else:
+                return []
+        elif quote == 'null':
+            return []
+        else:    
+            j = list (db.account_history.find({'bulk.account_history.account':account, 'bulk.block_data.block_time':{'$gte':start, '$lte':end}, '$or':[{'op.fill_price.base.asset_id':base,'op.fill_price.quote.asset_id':quote}, {'op.fill_price.base.asset_id': quote,'op.fill_price.quote.asset_id': base}] }).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
+            c = db.account_history.find({'bulk.account_history.account':account, 'bulk.block_data.block_time':{'$gte':start, '$lte':end}, '$or':[{'op.fill_price.base.asset_id':base,'op.fill_price.quote.asset_id':quote}, {'op.fill_price.base.asset_id': quote,'op.fill_price.quote.asset_id': base}] }).count()
+    results = [0 for x in range(len(j))]
+    for n in range(0, len(j)):
+        results[n] = {"op": [j[n]['bulk']['operation_type'],j[n]["op"]],
+                      "block_num": j[n]['bulk']["block_data"]["block_num"],
+                      "id": j[n]['bulk']["account_history"]["operation_id"],
+                      "timestamp": j[n]['bulk']["block_data"]["block_time"],
+		              'obj_id' : str(j[n]['_id'])
+                      }
+    return [results,c]
+
+
+
+@cache.memoize(timeout= 5 )    
+def get_ops_fill_pair_strict(account,start, end, base, quote, limit, page):
+    page = int(page)
+    limit_ = int(limit)
+    limit_ = _ensure_safe_limit(limit_)    
+    skip_ = page * limit_
+    if start == 'null':
+        start = '2018-01-01'
+    if end == 'null':
+        end = '2050-01-01'
+ 
+    if account == "null":
+        res = _get_ops_fill_pair_noaccount_strict(start, end, base, quote, limit, page)
+        return res
+    if start != 'null' and end != 'null':
+        if base == 'null':
+            if quote == 'null':
+                j = list (db.account_history.find({'bulk.account_history.account':account, 'bulk.block_data.block_time':{'$gte':start, '$lte':end},'bulk.operation_type':4 }).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
+                c = db.account_history.find({'bulk.account_history.account':account, 'bulk.block_data.block_time':{'$gte':start, '$lte':end},'bulk.operation_type':4 }).count()
+            else:
+                return []
+        elif quote == 'null':
+            return []
+        else:    
+            j = list (db.account_history.find({'bulk.account_history.account':account, 'bulk.block_data.block_time':{'$gte':start, '$lte':end}, 'op.fill_price.base.asset_id':base,'op.fill_price.quote.asset_id':quote}).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
+            c = db.account_history.find({'bulk.account_history.account':account, 'bulk.block_data.block_time':{'$gte':start, '$lte':end}, 'op.fill_price.base.asset_id':base,'op.fill_price.quote.asset_id':quote}).count()
+   
+        results = [0 for x in range(len(j))]
+    for n in range(0, len(j)):
+        results[n] = {"op": [j[n]['bulk']['operation_type'],j[n]["op"]],
+                      "block_num": j[n]['bulk']["block_data"]["block_num"],
+                      "id": j[n]['bulk']["account_history"]["operation_id"],
+                      "timestamp": j[n]['bulk']["block_data"]["block_time"],
+		              'obj_id' : str(j[n]['_id'])
+                      }
+    return [results,c]
+
 
 
 @cache.memoize(timeout= 5 )    
 def get_ops_fill_pair(account,start, end, base, quote, limit, page):
     page = int(page)
     limit_ = int(limit)
+    limit_ = _ensure_safe_limit(limit_)    
     skip_ = page * limit_
+    if start == 'null':
+        start = '2018-01-01'
+    if end == 'null':
+        end = '2050-01-01'
+ 
+    if account == "null":
+        res = _get_ops_fill_pair_noaccount(start, end, base, quote, limit, page)[0]
+        return res
     if start != 'null' and end != 'null':
         if base == 'null':
             if quote == 'null':
@@ -203,38 +599,6 @@ def get_ops_fill_pair(account,start, end, base, quote, limit, page):
             return []
         else:    
             j = list (db.account_history.find({'bulk.account_history.account':account, 'bulk.block_data.block_time':{'$gte':start, '$lte':end}, '$or':[{'op.fill_price.base.asset_id':base,'op.fill_price.quote.asset_id':quote}, {'op.fill_price.base.asset_id': quote,'op.fill_price.quote.asset_id': base}] }).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
-    elif start == 'null' and end == 'null':
-        if base == 'null':
-            if quote == 'null':
-                j = list (db.account_history.find({'bulk.account_history.account':account, 'bulk.operation_type':4 }).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
-            else:
-                return []
-        elif quote == 'null':
-            return []
-        else:    
-            j = list (db.account_history.find({'bulk.account_history.account':account, '$or':[{'op.fill_price.base.asset_id':base,'op.fill_price.quote.asset_id':quote},{'op.fill_price.base.asset_id':quote ,'op.fill_price.quote.asset_id':base}] }).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
-    
-    elif start != 'null' and end == 'null': 
-        if base == 'null':
-            if quote == 'null':
-                j = list (db.account_history.find({'bulk.account_history.account':account, 'bulk.block_data.block_time':{'$gte':start},'bulk.operation_type':4 }).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
-            else:
-                return []
-        elif quote == 'null':
-            return []
-        else:    
-            j = list (db.account_history.find({'bulk.account_history.account':account, 'bulk.block_data.block_time':{'$gte':start}, '$or':[{'op.fill_price.base.asset_id':base,'op.fill_price.quote.asset_id':quote },{'op.fill_price.base.asset_id':quote ,'op.fill_price.quote.asset_id':base}]}).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
- 
-    elif start == 'null' and end != 'null':
-        if base == 'null':
-            if quote == 'null':
-                j = list (db.account_history.find({'bulk.account_history.account':account, 'bulk.block_data.block_time':{'$lte':end},'bulk.operation_type':4 }).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
-            else:
-                return []
-        elif quote == 'null':
-            return []
-        else:    
-            j = list (db.account_history.find({'bulk.account_history.account':account, 'bulk.block_data.block_time':{'$lte':end}, '$or':[{'op.fill_price.base.asset_id':base,'op.fill_price.quote.asset_id':quote},{'op.fill_price.base.asset_id':quote ,'op.fill_price.quote.asset_id':base}] }).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
     results = [0 for x in range(len(j))]
     for n in range(0, len(j)):
         results[n] = {"op": [j[n]['bulk']['operation_type'],j[n]["op"]],
@@ -243,7 +607,7 @@ def get_ops_fill_pair(account,start, end, base, quote, limit, page):
                       "timestamp": j[n]['bulk']["block_data"]["block_time"],
 		              'obj_id' : str(j[n]['_id'])
                       }
-    return list(results)
+    return results
 
 
 
@@ -251,7 +615,14 @@ def get_ops_fill_pair(account,start, end, base, quote, limit, page):
 def get_ops_conds_mongo(account,start, end, op_type_id, asset, limit, page):
     page = int(page)
     limit_ = int(limit)
+    limit_ = _ensure_safe_limit(limit_)    
     skip_ = page * limit_
+
+    if start == 'null':
+        start = '2018-01-01'
+    if end == 'null':
+        end = '2050-01-01'
+
     if start != 'null' and end != 'null':
         if op_type_id != -1:
             if asset != 'null':
@@ -267,48 +638,7 @@ def get_ops_conds_mongo(account,start, end, op_type_id, asset, limit, page):
                 ).limit(limit_).skip(skip_))
             else:
                 j = list (db.account_history.find({'bulk.account_history.account':account, 'bulk.block_data.block_time':{'$gte':start, '$lte':end}}).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
-    elif start == 'null' and end != 'null':
-        if op_type_id != -1:
-            if asset != 'null':
-                j = list (db.account_history.find({'bulk.account_history.account':account,'bulk.operation_type':op_type_id, 'bulk.block_data.block_time':{ '$lte':end},\
-                 '$or':[{'op.amount.asset_id':asset },{'op.amount_to_sell.asset_id':asset},{'op.min_to_receive.asset_id':asset},{'op.pays.asset_id':asset},{'op.receives.asset_id':asset}] }).sort([('bulk.block_data.block_num',-1)] \
-                ).limit(limit_).skip(skip_))
-            else:
-                j = list (db.account_history.find({'bulk.account_history.account':account,'bulk.operation_type':op_type_id, 'bulk.block_data.block_time':{ '$lte':end}}).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
-        else:
-            if asset != 'null':
-                j = list (db.account_history.find({'bulk.account_history.account':account, 'bulk.block_data.block_time':{ '$lte':end}, \
-                '$or':[{'op.amount.asset_id':asset },{'op.amount_to_sell.asset_id':asset},{'op.min_to_receive.asset_id':asset},{'op.pays.asset_id':asset},{'op.receives.asset_id':asset}]  }).sort([('bulk.block_data.block_num',-1)] \
-                ).limit(limit_).skip(skip_))
-            else:
-                j = list (db.account_history.find({'bulk.account_history.account':account, 'bulk.block_data.block_time':{'$lte':end}}).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
-    elif start != 'null' and end == 'null':
-        if op_type_id != -1:
-            if asset != 'null':
-                j = list (db.account_history.find({'bulk.account_history.account':account,'bulk.operation_type':op_type_id, 'bulk.block_data.block_time':{ '$gte':start},\
-                 '$or':[{'op.amount.asset_id':asset },{'op.amount_to_sell.asset_id':asset},{'op.min_to_receive.asset_id':asset},{'op.pays.asset_id':asset},{'op.receives.asset_id':asset}] }).sort([('bulk.block_data.block_num',-1)] \
-                ).limit(limit_).skip(skip_))
-            else:
-                j = list (db.account_history.find({'bulk.account_history.account':account,'bulk.operation_type':op_type_id, 'bulk.block_data.block_time':{ '$gte':start}}).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
-        else:
-            if asset != 'null':
-                j = list (db.account_history.find({'bulk.account_history.account':account, 'bulk.block_data.block_time':{ '$gte':start}, \
-                '$or':[{'op.amount.asset_id':asset },{'op.amount_to_sell.asset_id':asset},{'op.min_to_receive.asset_id':asset},{'op.pays.asset_id':asset},{'op.receives.asset_id':asset}]  }).sort([('bulk.block_data.block_num',-1)] \
-                ).limit(limit_).skip(skip_))
-            else:
-                j = list (db.account_history.find({'bulk.account_history.account':account, 'bulk.block_data.block_time':{'$gte':start}}).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
-    elif start == 'null' and end == 'null':
-        if op_type_id != -1:
-            if asset != 'null':
-                j = list (db.account_history.find({'bulk.account_history.account':account,'bulk.operation_type':op_type_id, '$or':[{'op.amount.asset_id':asset },{'op.amount_to_sell.asset_id':asset},{'op.min_to_receive.asset_id':asset},{'op.pays.asset_id':asset},{'op.receives.asset_id':asset}] }).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
-            else:
-                j = list (db.account_history.find({'bulk.account_history.account':account,'bulk.operation_type':op_type_id }).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
-        else:
-            if asset != 'null':
-                j = list (db.account_history.find({'bulk.account_history.account':account, '$or':[{'op.amount.asset_id':asset },{'op.amount_to_sell.asset_id':asset},{'op.min_to_receive.asset_id':asset},{'op.pays.asset_id':asset},{'op.receives.asset_id':asset}] }).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
-            else:
-                j = list (db.account_history.find({'bulk.account_history.account':account }).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
-        
+       
     results = [0 for x in range(len(j))]
     for n in range(0, len(j)):
         results[n] = {"op": [j[n]['bulk']['operation_type'],j[n]["op"]],
@@ -320,19 +650,106 @@ def get_ops_conds_mongo(account,start, end, op_type_id, asset, limit, page):
     return list(results)
 
 
+
 @cache.memoize(timeout= 3 )    
-def get_ops_by_transfer_accountspair_mongo(acct_from , acct_to, page, limit):
+def get_ops_conds_mongo2(account,start, end, op_type_id, asset, limit, page):
     page = int(page)
     limit_ = int(limit)
+    limit_ = _ensure_safe_limit(limit_)    
     skip_ = page * limit_
-    if acct_from != 'null' and acct_to != 'null':
-        j = list(db.account_history.find({'bulk.account_history.account':acct_from, 'bulk.operation_type':0, 'op.to':acct_to}).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
-    elif acct_from != 'null':
-        j = list(db.account_history.find({'bulk.account_history.account':acct_from, 'bulk.operation_type':0, 'op.from':acct_from}).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
-    elif acct_to != 'null':
-        j = list(db.account_history.find({'bulk.account_history.account':acct_to, 'bulk.operation_type':0, 'op.to':acct_to}).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
+    if start == 'null':
+        start = '2018-01-01'
+    if end == 'null':
+        end = '2050-01-01'
+
+    if start != 'null' and end != 'null':
+        if op_type_id != -1:
+            if asset != 'null':
+                j = list (db.account_history.find({'bulk.account_history.account':account,'bulk.operation_type':op_type_id, 'bulk.block_data.block_time':{'$gte':start, '$lte':end}, '$or':[{'op.amount.asset_id':asset },{'op.amount_to_sell.asset_id':asset},{'op.min_to_receive.asset_id':asset},{'op.pays.asset_id':asset},{'op.receives.asset_id':asset}] }).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
+                c = db.account_history.find({'bulk.account_history.account':account,'bulk.operation_type':op_type_id, 'bulk.block_data.block_time':{'$gte':start, '$lte':end}, '$or':[{'op.amount.asset_id':asset },{'op.amount_to_sell.asset_id':asset},{'op.min_to_receive.asset_id':asset},{'op.pays.asset_id':asset},{'op.receives.asset_id':asset}] }).count()
+            else:
+                j = list (db.account_history.find({'bulk.account_history.account':account,'bulk.operation_type':op_type_id, 'bulk.block_data.block_time':{'$gte':start, '$lte':end}}).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
+                c = db.account_history.find({'bulk.account_history.account':account,'bulk.operation_type':op_type_id, 'bulk.block_data.block_time':{'$gte':start, '$lte':end}}).count()
+        else:
+            if asset != 'null':
+                j = list (db.account_history.find({'bulk.account_history.account':account, 'bulk.block_data.block_time':{'$gte':start, '$lte':end}, '$or':[{'op.amount.asset_id':asset },{'op.amount_to_sell.asset_id':asset},{'op.min_to_receive.asset_id':asset},{'op.pays.asset_id':asset},{'op.receives.asset_id':asset}]  }).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
+                c = db.account_history.find({'bulk.account_history.account':account, 'bulk.block_data.block_time':{'$gte':start, '$lte':end}, '$or':[{'op.amount.asset_id':asset },{'op.amount_to_sell.asset_id':asset},{'op.min_to_receive.asset_id':asset},{'op.pays.asset_id':asset},{'op.receives.asset_id':asset}]  }).count()
+            else:
+                j = list (db.account_history.find({'bulk.account_history.account':account, 'bulk.block_data.block_time':{'$gte':start, '$lte':end}}).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
+                c = db.account_history.find({'bulk.account_history.account':account, 'bulk.block_data.block_time':{'$gte':start, '$lte':end}}).count()
+       
+    results = [0 for x in range(len(j))]
+    for n in range(0, len(j)):
+        results[n] = {"op": [j[n]['bulk']['operation_type'],j[n]["op"]],
+                      "block_num": j[n]['bulk']["block_data"]["block_num"],
+                      "id": j[n]['bulk']["account_history"]["operation_id"],
+                      "timestamp": j[n]['bulk']["block_data"]["block_time"],
+		              'obj_id' : str(j[n]['_id'])
+                      }
+    return [results,c]
+
+
+@cache.memoize(timeout= 60 )    
+def get_ops_by_transfer_accountspair_mongo(asset, acct_from , acct_to, filter_out_account, page, limit):
+    page = int(page)
+    limit_ = int(limit)
+    limit_ = _ensure_safe_limit(limit_)    
+    skip_ = page * limit_
+
+    if filter_out_account == 'null':
+        filter_out_accounts_list = []
     else:
-        j = []
+        filter_out_accounts_list = filter_out_account.split(',')
+    # if acct_from == '1.2.4733' or acct_to == '1.2.4733':
+    if acct_from in filter_out_accounts_list or acct_to in filter_out_accounts_list:
+        return []
+    if acct_from != 'null' and acct_to != 'null':
+        if acct_from == acct_to :
+            return []
+        if acct_from == 'or':
+            if asset == 'null':
+                j = list(db.account_history.find({'bulk.account_history.account':acct_to, 'bulk.operation_type':0}).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
+            else:
+                j = list(db.account_history.find({'bulk.account_history.account':acct_to, 'bulk.operation_type':0, 'op.amount.asset_id':asset}).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
+        else: 
+            if asset == 'null':
+                j = list(db.account_history.find({'bulk.account_history.account':acct_from, 'bulk.operation_type':0, 'op.to':acct_to}).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
+            else:
+                j = list(db.account_history.find({'bulk.account_history.account':acct_from, 'bulk.operation_type':0, 'op.to':acct_to, 'op.amount.asset_id':asset}).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
+    elif acct_from != 'null':
+        if asset == 'null':
+            if filter_out_account == 'null':
+                j = list(db.account_history.find({'bulk.account_history.account':acct_from, 'bulk.operation_type':0, 'op.from':acct_from}).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
+            else:
+                j = list(db.account_history.find({'bulk.account_history.account':acct_from, 'bulk.operation_type':0, 'op.from':acct_from, 'op.to':{'$nin':filter_out_accounts_list}}).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
+        else:
+            if filter_out_account != 'null':
+                j = list(db.account_history.find({'bulk.account_history.account':acct_from, 'bulk.operation_type':0, 'op.from':acct_from, 'op.amount.asset_id':asset , 'op.to':{'$nin':filter_out_accounts_list}}).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
+            else:
+                j = list(db.account_history.find({'bulk.account_history.account':acct_from, 'bulk.operation_type':0, 'op.from':acct_from, 'op.amount.asset_id':asset }).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
+    elif acct_to != 'null':
+        if asset == 'null':
+            if filter_out_account != 'null':
+                j = list(db.account_history.find({'bulk.account_history.account':acct_to, 'bulk.operation_type':0, 'op.to':acct_to, 'op.from':{'$nin':filter_out_accounts_list}}).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
+            else:
+                j = list(db.account_history.find({'bulk.account_history.account':acct_to, 'bulk.operation_type':0, 'op.to':acct_to}).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
+        else:
+            if filter_out_account != 'null':
+                j = list(db.account_history.find({'bulk.account_history.account':acct_to, 'bulk.operation_type':0, 'op.to':acct_to, 'op.amount.asset_id':asset, 'op.from':{'$nin':filter_out_accounts_list}}).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
+            else:
+                j = list(db.account_history.find({'bulk.account_history.account':acct_to, 'bulk.operation_type':0, 'op.to':acct_to, 'op.amount.asset_id':asset}).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
+    else:
+        if asset == 'null':
+            if filter_out_account != 'null':
+                j = list(db.account_history.find({'bulk.operation_type':0, 'op.from':{'$nin':filter_out_accounts_list} , 'op.to':{'$nin':filter_out_accounts_list} }).limit(limit_).skip(skip_))
+            else:
+                logger.info(filter_out_account)
+                j = list(db.account_history.find({'bulk.operation_type':0}).limit(limit_).skip(skip_))
+        else:
+            if filter_out_account != 'null':
+                j = list(db.account_history.find({'bulk.operation_type':0, 'op.amount.asset_id':asset, 'op.from':{'$nin':filter_out_accounts_list} , 'op.to':{'$nin':filter_out_accounts_list} }).limit(limit_).skip(skip_))
+            else:
+                j = list(db.account_history.find({'bulk.operation_type':0, 'op.amount.asset_id':asset}).limit(limit_).skip(skip_))
     results = [0 for x in range(len(j))]
     for n in range(0, len(j)):
         results[n] = {"op": [j[n]['bulk']['operation_type'],j[n]["op"]],
@@ -340,20 +757,103 @@ def get_ops_by_transfer_accountspair_mongo(acct_from , acct_to, page, limit):
                       "id": j[n]['bulk']["account_history"]["operation_id"],
                       "timestamp": j[n]['bulk']["block_data"]["block_time"],
 		              'obj_id' : str(j[n]['_id']) }
-    return list(results)
+    return results
+
+
+
+@cache.memoize(timeout= 60 )    
+def get_ops_by_transfer_accountspair_mongo2(asset, acct_from , acct_to, filter_out_account, page, limit):
+    page = int(page)
+    limit_ = int(limit)
+    limit_ = _ensure_safe_limit(limit_)    
+    skip_ = page * limit_
+    if filter_out_account == 'null':
+        filter_out_accounts_list = []
+    else:
+        filter_out_accounts_list = filter_out_account.split(',')
+    # if acct_from == '1.2.4733' or acct_to == '1.2.4733':
+    if acct_from in filter_out_accounts_list or acct_to in filter_out_accounts_list:
+        return []
+    if acct_from != 'null' and acct_to != 'null':
+        if acct_from == acct_to :
+            return [0,[]]
+        if acct_from == 'or':
+            if asset == 'null':
+                j = list(db.account_history.find({'bulk.account_history.account':acct_to, 'bulk.operation_type':0}).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
+                c = db.account_history.find({'bulk.account_history.account':acct_to, 'bulk.operation_type':0}).count()
+            else:
+                j = list(db.account_history.find({'bulk.account_history.account':acct_to, 'bulk.operation_type':0, 'op.amount.asset_id':asset}).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
+                c = db.account_history.find({'bulk.account_history.account':acct_to, 'bulk.operation_type':0, 'op.amount.asset_id':asset}).count()
+        else: 
+            if asset == 'null':
+                j = list(db.account_history.find({'bulk.account_history.account':acct_from, 'bulk.operation_type':0, 'op.to':acct_to}).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
+                c = db.account_history.find({'bulk.account_history.account':acct_from, 'bulk.operation_type':0, 'op.to':acct_to}).count()
+            else:
+                j = list(db.account_history.find({'bulk.account_history.account':acct_from, 'bulk.operation_type':0, 'op.to':acct_to, 'op.amount.asset_id':asset}).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
+                c = db.account_history.find({'bulk.account_history.account':acct_from, 'bulk.operation_type':0, 'op.to':acct_to, 'op.amount.asset_id':asset}).count()
+    elif acct_from != 'null':
+        if asset == 'null':
+            if filter_out_account == 'null':
+                j = list(db.account_history.find({'bulk.account_history.account':acct_from, 'bulk.operation_type':0, 'op.from':acct_from}).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
+                c = db.account_history.find({'bulk.account_history.account':acct_from, 'bulk.operation_type':0, 'op.from':acct_from}).count()
+            else:
+                j = list(db.account_history.find({'bulk.account_history.account':acct_from, 'bulk.operation_type':0, 'op.from':acct_from, 'op.to':{'$nin':filter_out_accounts_list}}).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
+                c = db.account_history.find({'bulk.account_history.account':acct_from, 'bulk.operation_type':0, 'op.from':acct_from, 'op.to':{'$nin':filter_out_accounts_list}}).count()
+        else:
+            if filter_out_account != 'null':
+                j = list(db.account_history.find({'bulk.account_history.account':acct_from, 'bulk.operation_type':0, 'op.from':acct_from, 'op.amount.asset_id':asset , 'op.to':{'$nin':filter_out_accounts_list}}).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
+                c = db.account_history.find({'bulk.account_history.account':acct_from, 'bulk.operation_type':0, 'op.from':acct_from, 'op.amount.asset_id':asset , 'op.to':{'$nin':filter_out_accounts_list}}).count()
+            else:
+                j = list(db.account_history.find({'bulk.account_history.account':acct_from, 'bulk.operation_type':0, 'op.from':acct_from, 'op.amount.asset_id':asset }).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
+                c = db.account_history.find({'bulk.account_history.account':acct_from, 'bulk.operation_type':0, 'op.from':acct_from, 'op.amount.asset_id':asset }).count()
+    elif acct_to != 'null':
+        if asset == 'null':
+            if filter_out_account != 'null':
+                j = list(db.account_history.find({'bulk.account_history.account':acct_to, 'bulk.operation_type':0, 'op.to':acct_to, 'op.from':{'$nin':filter_out_accounts_list}}).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
+                c = db.account_history.find({'bulk.account_history.account':acct_to, 'bulk.operation_type':0, 'op.to':acct_to, 'op.from':{'$nin':filter_out_accounts_list}}).count()
+            else:
+                j = list(db.account_history.find({'bulk.account_history.account':acct_to, 'bulk.operation_type':0, 'op.to':acct_to}).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
+                c = db.account_history.find({'bulk.account_history.account':acct_to, 'bulk.operation_type':0, 'op.to':acct_to}).count()
+        else:
+            if filter_out_account != 'null':
+                j = list(db.account_history.find({'bulk.account_history.account':acct_to, 'bulk.operation_type':0, 'op.to':acct_to, 'op.amount.asset_id':asset, 'op.from':{'$nin':filter_out_accounts_list}}).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
+                c = db.account_history.find({'bulk.account_history.account':acct_to, 'bulk.operation_type':0, 'op.to':acct_to, 'op.amount.asset_id':asset, 'op.from':{'$nin':filter_out_accounts_list}}).count()
+            else:
+                j = list(db.account_history.find({'bulk.account_history.account':acct_to, 'bulk.operation_type':0, 'op.to':acct_to, 'op.amount.asset_id':asset}).sort([('bulk.block_data.block_num',-1)] ).limit(limit_).skip(skip_))
+                c = db.account_history.find({'bulk.account_history.account':acct_to, 'bulk.operation_type':0, 'op.to':acct_to, 'op.amount.asset_id':asset}).count()
+    else:
+        if asset == 'null':
+            if filter_out_account != 'null':
+                j = list(db.account_history.find({'bulk.operation_type':0, 'op.from':{'$nin':filter_out_accounts_list} , 'op.to':{'$nin':filter_out_accounts_list} }).limit(limit_).skip(skip_))
+                c = db.account_history.find({'bulk.operation_type':0, 'op.from':{'$nin':filter_out_accounts_list} , 'op.to':{'$nin':filter_out_accounts_list} }).count()
+            else:
+                j = list(db.account_history.find({'bulk.operation_type':0}).limit(limit_).skip(skip_))
+                c = db.account_history.find({'bulk.operation_type':0}).count()
+        else:
+            if filter_out_account != 'null':
+                j = list(db.account_history.find({'bulk.operation_type':0, 'op.amount.asset_id':asset, 'op.from':{'$nin':filter_out_accounts_list} , 'op.to':{'$nin':filter_out_accounts_list} }).limit(limit_).skip(skip_))
+                c = db.account_history.find({'bulk.operation_type':0, 'op.amount.asset_id':asset, 'op.from':{'$nin':filter_out_accounts_list} , 'op.to':{'$nin':filter_out_accounts_list} }).count()
+            else:
+                j = list(db.account_history.find({'bulk.operation_type':0, 'op.amount.asset_id':asset}).limit(limit_).skip(skip_))
+                c = db.account_history.find({'bulk.operation_type':0, 'op.amount.asset_id':asset}).count()
+    results = [0 for x in range(len(j))]
+    for n in range(0, len(j)):
+        results[n] = {"op": [j[n]['bulk']['operation_type'],j[n]["op"]],
+                      "block_num": j[n]['bulk']["block_data"]["block_num"],
+                      "id": j[n]['bulk']["account_history"]["operation_id"],
+                      "timestamp": j[n]['bulk']["block_data"]["block_time"],
+		              'obj_id' : str(j[n]['_id']) }
+    return [results,c]
+
+
 
 def get_operation_full_mongo(operation_id):
     res = list(db.account_history.find({'bulk.account_history.operation_id':operation_id}).limit(1))
     if len(res) ==0:
         return []
     operation = { 
-        # "op": json.loads(res[0]["operation_history"]["op"]),
         "op": res[0]["op"],
         "block_num": res[0]['bulk']["block_data"]["block_num"], 
-#        "op_in_trx": res[0]["operation_history"]["op_in_trx"],
-#        "result": json.loads(res[0]["operation_history"]["operation_result"]), 
-#        "trx_in_block": res[0]["operation_history"]["trx_in_block"],
-#        "virtual_op": res[0]["operation_history"]["virtual_op"], 
         "block_time": res[0]['bulk']["block_data"]["block_time"]
     }
 
@@ -361,21 +861,34 @@ def get_operation_full_mongo(operation_id):
     operation = _enrich_operation(operation, bitshares_ws_client)
     return [ operation ]
 
+@cache.memoize(timeout= 3600 )
 def get_accounts():
     bitshares_ws_client = bitshares_ws_client_factory.get_instance(2)
-    core_asset_holders = bitshares_ws_client.request('asset', 'get_asset_holders', ['1.3.0', 0, 100])
-    return core_asset_holders
+    res = []
+    count = 0
+    while(1):
+        core_asset_holders = bitshares_ws_client.request('asset', 'get_asset_holders', ['1.3.0', count, 100])
+        res.extend(core_asset_holders)
+        if len(core_asset_holders) < 100:
+            count += len(core_asset_holders)
+            break
+        count += 100
+    bitshares_ws_client.close()
+    return { 'total':count, 'content': res}
 
 
 def get_full_account(account_id):
     bitshares_ws_client = bitshares_ws_client_factory.get_instance()
     account = bitshares_ws_client.request('database', 'get_full_accounts', [[account_id], 0])
+    bitshares_ws_client.close()
     return account
 
 
 def get_fees():
     bitshares_ws_client = bitshares_ws_client_factory.get_instance()
-    return bitshares_ws_client.get_global_properties()
+    res = bitshares_ws_client.get_global_properties()
+    bitshares_ws_client.close()
+    return res
 
 
 def get_account_history(account_id):
@@ -388,14 +901,59 @@ def get_account_history(account_id):
             creation_block = bitshares_ws_client.request('database', 'get_block_header', [str(transaction["block_num"]), 0])
             transaction["timestamp"] = creation_block["timestamp"]
             transaction["witness"] = creation_block["witness"]
-    try:
-        return account_history
-    except:
-        return {}
+    bitshares_ws_client.close()
+    return account_history
 
 
 def get_asset(asset_id):
     return [ _get_asset(asset_id) ]
+
+
+@cache.memoize(timeout= 60 )    
+def get_assets_supply(asset_ids):
+    asset_ids = asset_ids.split(',')
+    bitshares_ws_client = bitshares_ws_client_factory.get_instance()
+    assets = bitshares_ws_client.request('database', 'get_assets', [asset_ids, 0])
+    res_assets = []
+    for asset in assets:
+        dynamic_asset_data = bitshares_ws_client.get_object(asset["dynamic_asset_data_id"])
+        dynamic_asset_data['max_supply'] = asset['options']['max_supply']
+        dynamic_asset_data['symbol'] = asset['symbol']
+        dynamic_asset_data['precision'] = asset['precision']
+        res_assets.append(dynamic_asset_data)
+    bitshares_ws_client.close()
+    return res_assets
+    
+
+def _get_assets_supply(asset_ids):
+    bitshares_ws_client = bitshares_ws_client_factory.get_instance()
+    assets = bitshares_ws_client.request('database', 'get_assets', [asset_ids, 0])
+    jadepool_balances = bitshares_ws_client.request('database', 'get_full_accounts', [['1.2.4733'], 0])[0][1]['balances']
+    jadegateway_balance = dict(map(lambda x: (x['asset_type'],x['balance']), jadepool_balances) )
+    res_assets = []
+    for asset in assets:
+        dynamic_asset_data = bitshares_ws_client.get_object(asset["dynamic_asset_data_id"])
+        res_assets.append( float(dynamic_asset_data["current_supply"]) - float(jadegateway_balance.get(asset['id'],0) ) )
+    bitshares_ws_client.close()
+    return res_assets
+
+
+def _get_assets(asset_id_or_names,is_object):
+    bitshares_ws_client = bitshares_ws_client_factory.get_instance()
+    if not is_object: # use id
+        assets = bitshares_ws_client.request('database', 'lookup_asset_symbols', [asset_id_or_names, 0])
+    else:
+        assets = bitshares_ws_client.request('database', 'get_assets', [asset_id_or_names, 0])
+    res_assets = []
+    for asset in assets:
+        dynamic_asset_data = bitshares_ws_client.get_object(asset["dynamic_asset_data_id"])
+        asset["current_supply"] = dynamic_asset_data["current_supply"]
+        asset["confidential_supply"] = dynamic_asset_data["confidential_supply"]
+        asset["accumulated_fees"] = dynamic_asset_data["accumulated_fees"]
+        asset["fee_pool"] = dynamic_asset_data["fee_pool"]
+        res_assets.append(asset)
+    bitshares_ws_client.close()
+    return res_assets
 
 
 def _get_asset(asset_id_or_name):
@@ -414,6 +972,7 @@ def _get_asset(asset_id_or_name):
 
     issuer = bitshares_ws_client.get_object(asset["issuer"])
     asset["issuer_name"] = issuer["name"]
+    bitshares_ws_client.close()
 
     return asset
 
@@ -421,18 +980,55 @@ def _get_asset(asset_id_or_name):
 def get_block_header(block_num):
     bitshares_ws_client = bitshares_ws_client_factory.get_instance()
     block_header = bitshares_ws_client.request('database', 'get_block_header', [block_num, 0])
+    bitshares_ws_client.close()
+
     return block_header
+
+def get_peak():
+    try:
+        res = list(db.peak.find({}).sort([('block_num',-1)]).limit(1))[0]
+        j = {}
+        j['block_num']= res['block_num']
+        j['count']= res['count']
+        j['peak']= res['peak']
+    except:
+        j = []
+    return j
+
+def get_trx_num_mongo(block_num):
+    try:
+        res = list(db.peak.find({'block_num': block_num}))[0]
+        j = {}
+        j['block_num']= res['block_num']
+        j['count']= res['count']
+        j['peak']= res['peak']
+    except:
+        j = []
+    return j
+
+
+
+@cache.memoize(timeout= 3 )
+def get_trx_num(block_num):
+    bitshares_ws_client = bitshares_ws_client_factory.get_instance()
+    ops = bitshares_ws_client.request('database', 'get_block', [block_num, 0])['transactions']#['operations']
+    bitshares_ws_client.close()
+    return len(ops)
 
 
 def get_block(block_num):
     bitshares_ws_client = bitshares_ws_client_factory.get_instance()
     block = bitshares_ws_client.request('database', 'get_block', [block_num, 0])
+    bitshares_ws_client.close()
     return block
 
 
 def get_ticker(base, quote):
     bitshares_ws_client = bitshares_ws_client_factory.get_instance()
-    return bitshares_ws_client.request('database', 'get_ticker', [base, quote])
+    res = bitshares_ws_client.request('database', 'get_ticker', [base, quote])
+    bitshares_ws_client.close()
+    return res
+    return block
 
 
 def get_volume(base, quote):
@@ -442,12 +1038,15 @@ def get_volume(base, quote):
 
 def get_object(object):
     bitshares_ws_client = bitshares_ws_client_factory.get_instance()
-    return [ bitshares_ws_client.get_object(object) ]
+    res = [ bitshares_ws_client.get_object(object) ]
+    bitshares_ws_client.close()
+    return res
 
 def _ensure_asset_id(asset_id):
     bitshares_ws_client = bitshares_ws_client_factory.get_instance()
     if not _is_object(asset_id):
         asset = bitshares_ws_client.request('database', 'lookup_asset_symbols', [[asset_id], 0])[0]
+        bitshares_ws_client.close()
         return asset['id']
     else:
         return asset_id
@@ -455,13 +1054,16 @@ def _ensure_asset_id(asset_id):
 def get_asset_holders_count(asset_id):
     asset_id = _ensure_asset_id(asset_id)
     bitshares_ws_client = bitshares_ws_client_factory.get_instance(2)
-    return bitshares_ws_client.request('asset', 'get_asset_holders_count', [asset_id])
+    res = bitshares_ws_client.request('asset', 'get_asset_holders_count', [asset_id])
+    bitshares_ws_client.close()
+    return res
 
 
 def get_asset_holders(asset_id, start=0, limit=20):
     asset_id = _ensure_asset_id(asset_id)
     bitshares_ws_client = bitshares_ws_client_factory.get_instance(2)
     asset_holders = bitshares_ws_client.request('asset', 'get_asset_holders', [asset_id, start, limit])
+    bitshares_ws_client.close()
     return asset_holders
 
 
@@ -483,6 +1085,7 @@ def get_workers():
             worker["perc"] = perc
             result.append([worker])
 
+    bitshares_ws_client.close()
     result = result[::-1] # Reverse list.
     return result
 
@@ -500,12 +1103,14 @@ def get_order_book(base, quote, limit=False):
     limit = _ensure_safe_limit(limit)    
     bitshares_ws_client = bitshares_ws_client_factory.get_instance()
     order_book = bitshares_ws_client.request('database', 'get_order_book', [base, quote, limit])
+    bitshares_ws_client.close()
     return order_book
 
 
 def get_margin_positions(account_id):
     bitshares_ws_client = bitshares_ws_client_factory.get_instance()
     margin_positions = bitshares_ws_client.request('database', 'get_margin_positions', [account_id])
+    bitshares_ws_client.close()
     return margin_positions
 
 
@@ -514,6 +1119,7 @@ def get_witnesses():
     witnesses_count = bitshares_ws_client.request('database', 'get_witness_count', [])
     witnesses = bitshares_ws_client.request('database', 'get_objects', [ ['1.6.{}'.format(w) for w in range(0, witnesses_count)] ])
     result = []
+    bitshares_ws_client.close()
     for witness in witnesses:
         if witness:
             witness["witness_account_name"] = get_account_name(witness["witness_account"])
@@ -529,6 +1135,7 @@ def get_committee_members():
     bitshares_ws_client = bitshares_ws_client_factory.get_instance()
     committee_count = bitshares_ws_client.request('database', 'get_committee_count', [])
     committee_members = bitshares_ws_client.request('database', 'get_objects', [ ['1.5.{}'.format(i) for i in range(0, committee_count)] ])
+    bitshares_ws_client.close()
 
     result = []
     for committee_member in committee_members:
@@ -563,6 +1170,7 @@ def get_market_chart_data(base, quote):
     ago = now - datetime.timedelta(days=100)
     market_history = bitshares_ws_client.request('history', 'get_market_history', [base_id, quote_id, 86400, ago.strftime("%Y-%m-%dT%H:%M:%S"), now.strftime("%Y-%m-%dT%H:%M:%S")])
 
+    bitshares_ws_client.close()
     data = []
     for market_operation in market_history:
 
@@ -596,8 +1204,6 @@ def get_market_chart_data(base, quote):
 @cache.memoize()
 def agg_op_type():
     j = list( db.account_history.aggregate([{'$group' : {'_id' : "$bulk.operation_type", 'num_tutorial' : {'$sum' : 1}}}]))
-    # j = json.loads(contents)
-    # return j
     
     results = [0 for x in range(len(j))]
     for n in range(0, len(j)):
@@ -612,12 +1218,14 @@ def _get_formatted_proxy_votes(proxies, vote_id):
 def lookup_accounts(start):
     bitshares_ws_client = bitshares_ws_client_factory.get_instance()
     accounts = bitshares_ws_client.request('database', 'lookup_accounts', [start, 1000])
+    bitshares_ws_client.close()
     return accounts
 
 
 def get_last_block_number():
     bitshares_ws_client = bitshares_ws_client_factory.get_instance()
     dynamic_global_properties = bitshares_ws_client.request('database', 'get_dynamic_global_properties', [])
+    bitshares_ws_client.close()
     return dynamic_global_properties["head_block_number"]
 
 
@@ -681,8 +1289,8 @@ def get_account_history_pager_mongo_count(account_id ):
 @cache.memoize(timeout= 2 )    
 def get_realtime_pager_mongo(page, limit ):
     limit_ = int(limit)
+    limit_ = _ensure_safe_limit(limit_)    
     from_ = int(page) * limit
-    # j = list(db.account_history.find().sort([('_id',-1)] ).limit(limit_))
     j = list(db.account_history.find().sort([('bulk.block_data.block_num',-1)] ).limit(limit_))
     results = [0 for x in range(len(j))]
     for n in range(0, len(j)):
@@ -698,6 +1306,7 @@ def get_realtime_pager_mongo(page, limit ):
 def get_account_history_pager_mongo(account_id, page, limit ):
     # total = get_account_history_pager_mongo_count(account_id)
     limit_ = int(limit)
+    limit_ = _ensure_safe_limit(limit_)    
     from_ = int(page) * limit
     # from_ = total - (int(page) * limit_ + limit_)
     if from_ < 0:
@@ -705,11 +1314,8 @@ def get_account_history_pager_mongo(account_id, page, limit ):
         from_ = 0
     if account_id == 'null':
 	    return {}
-    # logging.info("request: " + account_id + " ;" + str(from_) + " ;" + str(limit_) + " ;" + str(total))
-    # account_id = get_account_id(account_id)
     j = list(db.account_history.find({'bulk.account_history.account':account_id}).sort([('bulk.block_data.block_num',-1)] ).skip(from_).limit(limit_))
-    # j = list(db.account_history.find({'bulk.account_history.account':account_id}).skip(from_).limit(limit_))
-    logging.info("mongo req done: " + account_id + " ;" + str(page) + " ;" + str(limit))
+    logger.info("mongo req done: " + account_id + " ;" + str(page) + " ;" + str(limit))
     results = [0 for x in range(len(j))]
     llen = len(j) -  1
     for n in range(0, len(j)):
@@ -725,24 +1331,28 @@ def get_account_history_pager_mongo(account_id, page, limit ):
 def get_limit_orders(base, quote):
     bitshares_ws_client = bitshares_ws_client_factory.get_instance()
     limit_orders = bitshares_ws_client.request('database', 'get_limit_orders', [base, quote, 100])
+    bitshares_ws_client.close()
     return limit_orders
 
 
 def get_call_orders(asset_id):
     bitshares_ws_client = bitshares_ws_client_factory.get_instance()
     call_orders = bitshares_ws_client.request('database', 'get_call_orders', [asset_id, 100])
+    bitshares_ws_client.close()
     return call_orders
 
 
 def get_settle_orders(asset, limit):
     bitshares_ws_client = bitshares_ws_client_factory.get_instance()
     settle_orders = bitshares_ws_client.request('database', 'get_settle_orders', [asset, limit])
+    bitshares_ws_client.close()
     return settle_orders
 
 
 def get_fill_order_history(base, quote):
     bitshares_ws_client = bitshares_ws_client_factory.get_instance()
     fill_order_history = bitshares_ws_client.request('history', 'get_fill_order_history', [base, quote, 100])
+    bitshares_ws_client.close()
     return fill_order_history
 
 
@@ -770,6 +1380,7 @@ def get_all_asset_holders(asset_id):
         asset_holders = bitshares_ws_client.request('asset', 'get_asset_holders', [asset_id, start, 100])
         len_result = len(asset_holders)
         all.extend(asset_holders)
+    bitshares_ws_client.close()
 
     return all
 
@@ -783,4 +1394,5 @@ def get_grouped_limit_orders(quote, base, group=10, limit=False):
     bitshares_ws_client = bitshares_ws_client_factory.get_instance()
     grouped_limit_orders = bitshares_ws_client.request('orders', 'get_grouped_limit_orders', [base, quote, group, None, limit])
 
+    bitshares_ws_client.close()
     return grouped_limit_orders
