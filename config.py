@@ -6,7 +6,8 @@ Q_USER= os.environ.get('Q_USER', 'sunqi:sunqi123')
 
 # WS_ADDR='ws://47.75.154.39:8080/'
 # WS_ADDR='wss://shanghai.51nebula.com/'
-WS_ADDR='ws://139.224.11.255:8090/'
+# WS_ADDR='ws://139.224.11.255:8090/'
+WS_ADDR='ws://47.102.157.234:8090/'
 
 WEBSOCKET_URL = os.environ.get('WEBSOCKET_URL',WS_ADDR) 
 WEBSOCKET_URL2 = os.environ.get('WEBSOCKET_URL', WS_ADDR)

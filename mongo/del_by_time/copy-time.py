@@ -36,7 +36,7 @@ def get_last_date():
         logger.error('get_last_date failed')
         exit(1)
     return res
-N = 54
+N = 90
 def deal(startdate):
     first = get_first_date()
     logger.info('first is ' + str(first))
@@ -51,7 +51,7 @@ def deal(startdate):
         di += timedelta(1,0,0)
         try:
             # db.eval("db.account_history.find({'bulk.block_data.block_time':{$gte: '%s',$lt: '%s'} }).forEach( function(d){ db['%s'].insert(d); } )" % (tmpstart,tmpend, col_name) )
-            logger.info(tmpstart + '\t' + tmpend+ '\t' + col_name)
+            logger.info('from  '+tmpstart + '\t to \t' + tmpend+ '\t' + col_name)
             # db[col_name].drop()
             for it in db.account_history.find({'bulk.block_data.block_time':{"$gte": tmpstart,"$lt": tmpend } })  :
                 db[col_name].save(it)

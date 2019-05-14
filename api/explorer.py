@@ -19,7 +19,7 @@ logging.basicConfig(level=logging.DEBUG,
                 datefmt='%a, %d %b %Y %H:%M:%S',
                 filename='/tmp/log/mydebug.log',
                 filemode='w')
-logHandler = TimedRotatingFileHandler(filename = '/tmp/log/log.log', when = 'D', interval = 1, encoding='utf-8')
+logHandler = TimedRotatingFileHandler(filename = '/tmp/log/mydebug.log', when = 'D', interval = 1, encoding='utf-8')
 logger = logging.getLogger('logger')
 formatter = logging.Formatter('%(asctime)s %(filename)s[line:%(lineno)d] %(levelname)s %(message)s')
 logHandler.setFormatter(formatter)
@@ -33,7 +33,7 @@ logger.info(config.MONGODB_DB_NAME)
 # qconn = q.q(host = config.Q_HOST, port = config.Q_PORT, user = config.Q_USER)
 ###################### Q functions ######################
 
-@cache.memoize(timeout= 600 )    
+@cache.memoize(timeout= 30 )    
 def statistic_rank_pair_top(duration, side, ttype, baseAsset, quoteAsset):
     qconn = q.q(host = config.Q_HOST, port = config.Q_PORT, user = config.Q_USER)
     if duration not in (1,12,24):
@@ -46,17 +46,23 @@ def statistic_rank_pair_top(duration, side, ttype, baseAsset, quoteAsset):
     tbname = '_'.join(['top','pair',ttype,side,duration]).replace('__','_')
     if baseAsset != 'null' and quoteAsset != 'null':
         sql = 'trade[%s];select from %s where (basset=`%s ) and (qasset = `%s) ' % (duration, tbname, baseAsset, quoteAsset) 
+        sql2 = 'select basset,qasset,amt from (select sum amt by basset,qasset from %s) where (basset=`%s ) and (qasset = `%s)' % (tbname , baseAsset, quoteAsset) 
     else:
         sql = 'trade[%s];select from %s' % (duration, tbname)
+        sql2 = 'select basset,qasset,amt from select sum amt by basset,qasset from %s ' % (tbname ) 
     try:
+        logger.info(sql)
+        logger.info(sql2)
         res = qconn.k(str(sql))
+        res2 = qconn.k(str(sql2))
     except:
-        res = []
         logger.error(traceback.format_exc())
         logger.error(sql)
+        return {'ranking':[],'total':[]}
     qconn.close()
     try:
-        return map(lambda x: {'basset':x[0],'qasset':x[1],'account':x[2],'amount':x[3]},list(res))
+        # return map(lambda x: {'basset':x[0],'qasset':x[1],'account':x[2],'amount':x[3]},list(res))
+        return  {'ranking':map(lambda x: {'basset':x[0],'qasset':x[1],'account':x[2],'amount':x[3]},list(res)),'total':map(lambda x: {'basset':x[0],'qasset':x[1],'amount':x[2]},list(res2))}
     except:
         logger.error(sql)
         logger.error(res)
@@ -64,7 +70,7 @@ def statistic_rank_pair_top(duration, side, ttype, baseAsset, quoteAsset):
 
 
 
-@cache.memoize(timeout= 600 )    
+@cache.memoize(timeout= 30 )    
 def statistic_rank_top(duration, side, ttype, asset):
     qconn = q.q(host = config.Q_HOST, port = config.Q_PORT, user = config.Q_USER)
     if duration not in (1,12,24):
@@ -80,6 +86,7 @@ def statistic_rank_top(duration, side, ttype, asset):
     else:
         sql = 'trade[%s];select from %s' % (duration, tbname)
     try:
+        logger.info(sql)
         res = qconn.k(str(sql))
     except:
         res = []
@@ -293,6 +300,7 @@ def get_account_count_24h():
         j['block_date'] = res['block_date']
     except:
         logger.error('invalid param date_, format must be %Y-%m-%d and in the range')
+        return []
     # j = db.account_history.find({'bulk.block_data.block_time':{'$gte':str(start)[:10],'$lt':str(end)[:10]}, 'bulk.operation_type':5}).count() / 2 
     return j
 
@@ -920,6 +928,11 @@ def get_assets_supply(asset_ids):
         dynamic_asset_data['max_supply'] = asset['options']['max_supply']
         dynamic_asset_data['symbol'] = asset['symbol']
         dynamic_asset_data['precision'] = asset['precision']
+        bitasset_data_id = asset.get('bitasset_data_id',None)
+        if bitasset_data_id!= None:
+            bitasset_data = bitshares_ws_client.get_object(bitasset_data_id)
+            asset['_bitasset_data'] = bitasset_data
+        dynamic_asset_data['asset_full_info'] = asset
         res_assets.append(dynamic_asset_data)
     bitshares_ws_client.close()
     return res_assets
@@ -984,6 +997,7 @@ def get_block_header(block_num):
 
     return block_header
 
+@cache.memoize(timeout= 1)    
 def get_peak():
     try:
         res = list(db.peak.find({}).sort([('block_num',-1)]).limit(1))[0]
@@ -1261,9 +1275,10 @@ def get_account_history_pager(account_id, page):
 def get_realtime_ops(obj_id, limit, direction): # direction is  $gte or $lte
     # from_ = int(page) * 20
     # cond = {"$lt":'ObjectId("5b879de955ef3308b134b571"')}
+    limit_ = _ensure_safe_limit(limit)    
     cond = {'$'+direction : ObjectId(obj_id) }
     if "lt" in direction:
-    	j = list(db.account_history.find({'_id': cond }).sort([('_id',-1)] ).limit(limit))
+    	j = list(db.account_history.find({'_id': cond }).sort([('_id',-1)] ).limit(limit_))
     elif "gt" in direction:
     	j = list(db.account_history.find({'_id': cond }).limit(limit_))
 	
