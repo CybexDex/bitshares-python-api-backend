@@ -41,19 +41,6 @@ def deal(startdate):
     first = get_first_date()
     logger.info('first is ' + str(first))
     logger.info('start is ' + str(startdate))
-    di = first
-    while 1:
-        if di >= startdate:
-            break
-        tmpstart = str(di)[:10]
-        tmpend = str(di + timedelta(1,0,0) )[:10]
-        di += timedelta(1,0,0)
-        try:
-            logger.info('try to delete data before ' +  str(tmpend)[:10] )
-            db.account_history.delete_many({'bulk.block_data.block_time':{'$lt': str(tmpend)[:10]}})
-        except:
-            logger.error('fail to delete data on ' + tmpstart + ' to new collection '+ col_name)
-            continue
     try:
         logger.info('try to delete data before ' +  str(startdate)[:10] )
         db.account_history.delete_many({'bulk.block_data.block_time':{'$lt': str(startdate)[:10]}})
