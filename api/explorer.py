@@ -136,6 +136,22 @@ def get_asset_create_num():
     # asset_total_num = len(bitshares_ws_client.request('database', 'list_assets', ["",100]))
     bitshares_ws_client.close()
     return asset_total_num - j 
+@cache.memoize(timeout= 60)    
+def get_asset_create_num_24h_bj():
+    # j = db.account_history.find({'bulk.block_data.block_time':{'$gte':str(start)[:10] , '$lt': str(end)[:10]}, 'bulk.operation_type':10}).count()
+    try:
+        res = list(db.daily_8h.find({}).sort([('block_date',-1)]).limit(1))[0]
+        if is_print_date is False:
+            return res['asset_create_num']
+        j = {}
+        j['asset_create_num'] = res['asset_create_num']
+        j['block_date'] = res['block_date']
+    except:
+        try:
+            j = db.account_history.find({'bulk.block_data.block_time':{'$gte':str(datetime.datetime.utcnow())[:10]}, 'bulk.operation_type':10}).count()
+        except:
+            return []
+    return j
 
 @cache.memoize(timeout= 60)    
 def get_asset_create_num_24h():
@@ -155,6 +171,19 @@ def get_asset_create_num_24h():
             return []
     return j
 @cache.memoize(timeout= 600)    
+def get_ordercreate_num_24h_bj():
+    try:
+        res = list(db.daily_8h.find({}).sort([('block_date',-1)]).limit(1))[0]
+        if is_print_date is False:
+            return res['order_create_num']
+        j = {}
+        j['order_create_num'] = res['order_create_num']
+        j['block_date'] = res['block_date']
+    except:
+        j = {}
+    return j
+
+@cache.memoize(timeout= 600)    
 def get_ordercreate_num_24h():
     try:
         res = list(db.daily.find({}).sort([('block_date',-1)]).limit(1))[0]
@@ -162,6 +191,18 @@ def get_ordercreate_num_24h():
             return res['order_create_num']
         j = {}
         j['order_create_num'] = res['order_create_num']
+        j['block_date'] = res['block_date']
+    except:
+        j = {}
+    return j
+@cache.memoize(timeout= 3600 * 12 )    
+def get_ordercreate_account_num_24h_bj():
+    try:
+        res = list(db.daily_8h.find({}).sort([('block_date',-1)]).limit(1))[0]
+        if is_print_date is False:
+            return max(len(res.get('order_create_account_list', [])), res.get('order_create_account_num',0))
+        j = {}
+        j['order_create_account_num'] = max(len(res.get('order_create_account_list', [])), res.get('order_create_account_num',0))
         j['block_date'] = res['block_date']
     except:
         j = {}
@@ -178,6 +219,7 @@ def get_ordercreate_account_num_24h():
     except:
         j = {}
     return j
+
 
 @cache.memoize(timeout= 60 )    
 def get_asset_turnover_24h():
@@ -204,7 +246,7 @@ def get_asset_turnover_24h_single(asset_id):
     try:
         res = qconn.k(str(sql))
     except:
-        res = []
+        res = [(asset_id,0)]
         logger.error('error when ' + sql)
     qconn.close()
     asset_ids= map(lambda x: x[0],list(res))
@@ -226,6 +268,23 @@ def get_fill_cap_24h():
         logger.error('error when ' + sql)
     qconn.close()
     return list(res)
+@cache.memoize(timeout= 3600 )    
+def get_fill_cap_day_bj(date):
+    try:
+        res = list(db.daily_8h.find({'block_date':date}).limit(1))[0]
+        j = {}
+        to_ = {}
+        for k,v in  res['turnover'].items():
+            k_ = '1.3.' + k
+            to_[k_] = v
+        j['turnover'] = to_
+        j['block_date'] = res['block_date']
+    except:
+        logger.error('invalid param date_, format must be %Y-%m-%d')
+        return "invalid param date_, format must be %Y-%m-%d"
+    # j = list(db.account_history.aggregate([{'$match':{'bulk.operation_type':4, 'bulk.block_data.block_time':{'$gte': start ,'$lt': end }}},{ '$group' : {'_id':'$op.pays.asset_id', 'count':{'$sum': '$op.pays.amount' }}}]))
+    return j
+
 
 @cache.memoize(timeout= 3600 )    
 def get_fill_cap_day(date):
@@ -259,6 +318,23 @@ def get_fill_cap_day_timepoint(date):
     # return list(map(lambda x: {'_id':x['_id'],'count':x['pays']+x['receives']}, j))
     # j = list(db.account_history.aggregate([{'$match':{'bulk.operation_type':4, 'bulk.block_data.block_time':{'$gte': start ,'$lt': end }}},{ '$group' : {'_id':'$op.pays.asset_id', 'count':{'$sum':  '$op.receives.amount' }}}]))
 @cache.memoize(timeout= 60 )    
+def get_fill_count_day_bj(date):
+    try:
+        res = list(db.daily_8h.find({'block_date':date}).limit(1))[0]
+        if is_print_date is False:
+            return res['fill_order_num'] / 2
+        j = {}
+        j['fill_order_num'] = res['fill_order_num'] / 2
+        j['block_date'] = res['block_date']
+    except:
+        try:
+            j = db.account_history.find({'bulk.operation_type':4, 'bulk.block_data.block_time':{'$gte': date } }).count() / 2
+        except:
+            logger.error('invalid param date_, format must be %Y-%m-%d and in the range')
+            return "invalid param date_, format must be %Y-%m-%d and in the range"
+    # j = db.account_history.find({'bulk.operation_type':4, 'bulk.block_data.block_time':{'$gte': start ,'$lt': end } }).count() / 2
+    return j
+@cache.memoize(timeout= 60 )    
 def get_fill_count_day(date):
     try:
         res = list(db.daily.find({'block_date':date}).limit(1))[0]
@@ -288,6 +364,21 @@ def get_fill_count_24h():
         logger.error('error when ' + sql)
     qconn.close()
     return res
+@cache.memoize(timeout= 3600 )    
+def get_account_count_24h_bj():
+    try:
+        res = list(db.daily_8h.find().sort([('block_date',-1)]).limit(1))[0]
+        if is_print_date is False:
+            return res['create_acct_num'] / 2
+        j = {}
+        j['create_acct_num'] = res['create_acct_num'] / 2
+        j['block_date'] = res['block_date']
+    except:
+        logger.error('invalid param date_, format must be %Y-%m-%d and in the range')
+        return []
+    # j = db.account_history.find({'bulk.block_data.block_time':{'$gte':str(start)[:10],'$lt':str(end)[:10]}, 'bulk.operation_type':5}).count() / 2 
+    return j
+
 
 @cache.memoize(timeout= 3600 )    
 def get_account_count_24h():
@@ -312,10 +403,16 @@ def get_account(account_id):
     return res
 
 @cache.memoize(timeout= 3)    
+def get_account_count_days_store_bj(num):
+    res = list(db.daily_8h.find().sort([('block_date',-1)]).limit(num))
+    j =  list(map(lambda x:{'block_date':x['block_date'], 'create_acct_num':x['create_acct_num'] / 2},res))
+    return j
+@cache.memoize(timeout= 3)    
 def get_account_count_days_store(num):
     res = list(db.daily.find().sort([('block_date',-1)]).limit(num))
     j =  list(map(lambda x:{'block_date':x['block_date'], 'create_acct_num':x['create_acct_num'] / 2},res))
     return j
+
 
 
 @cache.memoize(timeout= 3)    
@@ -885,6 +982,14 @@ def get_accounts():
     return { 'total':count, 'content': res}
 
 
+def get_full_accounts(account_ids):
+    account_ids = account_ids.split(',')
+    bitshares_ws_client = bitshares_ws_client_factory.get_instance()
+    account = bitshares_ws_client.request('database', 'get_full_accounts', [account_ids, 0])
+    bitshares_ws_client.close()
+    return account
+
+
 def get_full_account(account_id):
     bitshares_ws_client = bitshares_ws_client_factory.get_instance()
     account = bitshares_ws_client.request('database', 'get_full_accounts', [[account_id], 0])
@@ -1169,6 +1274,80 @@ def get_market_chart_dates():
     date_list = [d.strftime("%Y-%m-%d") for d in date_list]
     return list(reversed(date_list))
 
+def get_market_data_hour_dur(base, quote, dur):
+    bitshares_ws_client = bitshares_ws_client_factory.get_instance()
+    base_asset = bitshares_ws_client.request('database', 'lookup_asset_symbols', [[base], 0])[0]
+    base_id = base_asset["id"]
+    base_precision = 10**base_asset["precision"]
+
+    quote_asset = bitshares_ws_client.request('database', 'lookup_asset_symbols', [[quote], 0])[0]
+    quote_id = quote_asset["id"]
+    quote_precision = 10**quote_asset["precision"]
+
+    now = datetime.datetime.utcnow()
+    ago = now - datetime.timedelta(seconds=dur*3600)
+    market_history = bitshares_ws_client.request('history', 'get_market_history', [base_id, quote_id, 3600, ago.strftime("%Y-%m-%dT%H:%M:%S"), now.strftime("%Y-%m-%dT%H:%M:%S")])
+
+    bitshares_ws_client.close()
+    return market_history
+ 
+
+def get_market_data_dur(base, quote, dur):
+    bitshares_ws_client = bitshares_ws_client_factory.get_instance()
+    base_asset = bitshares_ws_client.request('database', 'lookup_asset_symbols', [[base], 0])[0]
+    base_id = base_asset["id"]
+    base_precision = 10**base_asset["precision"]
+
+    quote_asset = bitshares_ws_client.request('database', 'lookup_asset_symbols', [[quote], 0])[0]
+    quote_id = quote_asset["id"]
+    quote_precision = 10**quote_asset["precision"]
+
+    # now = datetime.date.today()
+    now = datetime.datetime.utcnow()
+    ago = now - datetime.timedelta(days=dur)
+    market_history = bitshares_ws_client.request('history', 'get_market_history', [base_id, quote_id, 86400, ago.strftime("%Y-%m-%dT%H:%M:%S"), now.strftime("%Y-%m-%dT%H:%M:%S")])
+
+    bitshares_ws_client.close()
+    return market_history
+ 
+def get_market_chart_data_dur(base, quote, dur):
+    bitshares_ws_client = bitshares_ws_client_factory.get_instance()
+    base_asset = bitshares_ws_client.request('database', 'lookup_asset_symbols', [[base], 0])[0]
+    base_id = base_asset["id"]
+    base_precision = 10**base_asset["precision"]
+
+    quote_asset = bitshares_ws_client.request('database', 'lookup_asset_symbols', [[quote], 0])[0]
+    quote_id = quote_asset["id"]
+    quote_precision = 10**quote_asset["precision"]
+
+    now = datetime.date.today()
+    ago = now - datetime.timedelta(days=dur)
+    market_history = bitshares_ws_client.request('history', 'get_market_history', [base_id, quote_id, 86400, ago.strftime("%Y-%m-%dT%H:%M:%S"), now.strftime("%Y-%m-%dT%H:%M:%S")])
+
+    bitshares_ws_client.close()
+    data = []
+    for market_operation in market_history:
+        open_quote = float(market_operation["open_quote"])
+        high_quote = float(market_operation["high_quote"])
+        low_quote = float(market_operation["low_quote"])
+        close_quote = float(market_operation["close_quote"])
+
+        open_base = float(market_operation["open_base"])
+        high_base = float(market_operation["high_base"])
+        low_base = float(market_operation["low_base"])
+        close_base = float(market_operation["close_base"])
+
+        open = 1/(float(open_base/base_precision)/float(open_quote/quote_precision))
+        high = 1/(float(high_base/base_precision)/float(high_quote/quote_precision))
+        low = 1/(float(low_base/base_precision)/float(low_quote/quote_precision))
+        close = 1/(float(close_base/base_precision)/float(close_quote/quote_precision))
+
+        ohlc = [open, close, low, high]
+
+        data.append(ohlc)
+
+    return data
+
 
 def get_market_chart_data(base, quote):
     bitshares_ws_client = bitshares_ws_client_factory.get_instance()
@@ -1296,6 +1475,7 @@ def get_realtime_ops(obj_id, limit, direction): # direction is  $gte or $lte
     return list(results)
 
 
+@cache.memoize(timeout= 60 )    
 def get_account_history_pager_mongo_count(account_id ):
     account_id = get_account_id(account_id)
     res = db.account_history.find({'bulk.account_history.account':account_id}).count()
@@ -1317,7 +1497,7 @@ def get_realtime_pager_mongo(page, limit ):
                       }
     return list(results)
 
-@cache.memoize(timeout= 3 )    
+@cache.memoize(timeout= 30 )    
 def get_account_history_pager_mongo(account_id, page, limit ):
     # total = get_account_history_pager_mongo_count(account_id)
     limit_ = int(limit)
