@@ -1475,7 +1475,7 @@ def get_realtime_ops(obj_id, limit, direction): # direction is  $gte or $lte
     return list(results)
 
 
-@cache.memoize(timeout= 60 )    
+@cache.memoize(timeout= 300 )
 def get_account_history_pager_mongo_count(account_id ):
     account_id = get_account_id(account_id)
     res = db.account_history.find({'bulk.account_history.account':account_id}).count()
