@@ -716,7 +716,7 @@ def get_ops_fill_pair(account,start, end, base, quote, limit, page):
 
 
 
-@cache.memoize(timeout= 3 )    
+@cache.memoize(timeout= 30 )    
 def get_ops_conds_mongo(account,start, end, op_type_id, asset, limit, page):
     page = int(page)
     limit_ = int(limit)
@@ -756,7 +756,27 @@ def get_ops_conds_mongo(account,start, end, op_type_id, asset, limit, page):
 
 
 
-@cache.memoize(timeout= 3 )    
+@cache.memoize(timeout= 300 )    
+def get_ops_conds_mongo_count(account,start, end, op_type_id, asset):
+    if start == 'null':
+        start = '2018-01-01'
+    if end == 'null':
+        end = '2050-01-01'
+
+    if start != 'null' and end != 'null':
+        if op_type_id != -1:
+            if asset != 'null':
+                c = db.account_history.find({'bulk.account_history.account':account,'bulk.operation_type':op_type_id, 'bulk.block_data.block_time':{'$gte':start, '$lte':end}, '$or':[{'op.amount.asset_id':asset },{'op.amount_to_sell.asset_id':asset},{'op.min_to_receive.asset_id':asset},{'op.pays.asset_id':asset},{'op.receives.asset_id':asset}] }).count()
+            else:
+                c = db.account_history.find({'bulk.account_history.account':account,'bulk.operation_type':op_type_id, 'bulk.block_data.block_time':{'$gte':start, '$lte':end}}).count()
+        else:
+            if asset != 'null':
+                c = db.account_history.find({'bulk.account_history.account':account, 'bulk.block_data.block_time':{'$gte':start, '$lte':end}, '$or':[{'op.amount.asset_id':asset },{'op.amount_to_sell.asset_id':asset},{'op.min_to_receive.asset_id':asset},{'op.pays.asset_id':asset},{'op.receives.asset_id':asset}]  }).count()
+            else:
+                c = db.account_history.find({'bulk.account_history.account':account, 'bulk.block_data.block_time':{'$gte':start, '$lte':end}}).count()
+    return c      
+
+@cache.memoize(timeout= 30 )    
 def get_ops_conds_mongo2(account,start, end, op_type_id, asset, limit, page):
     page = int(page)
     limit_ = int(limit)
