@@ -9,6 +9,34 @@ schemes:
 produces:
   - application/json
 paths:
+
+  "/EON_pair_rank":
+    get:
+      description: Get EON_pair_rank
+      operationId: api.explorer.EON_pair_rank
+      parameters:
+        - in: query
+          name: baseAsset
+          default: 1.3.0
+          type: string
+          required: true
+          description: net or non-net('')
+        - in: query
+          name: quoteAsset
+          default: 1.3.27
+          type: string
+          required: true
+          description: as full
+      responses:
+        '200':
+          description: Array of operation data
+        '500':
+          description: Error processing parameters
+      tags:
+        - api
+        - blockchain
+        - d20190802
+
   "/statistic_rank_top":
     get:
       description: Get statistic_rank_top with duration('24','12','1'), side in ('sell','buy'), ttype in ('net','') and asset id
@@ -1547,6 +1575,44 @@ paths:
       tags:
         - api
         - market
+  "/market_data_hour_from":
+    get:
+      description: Get OHLC chart data
+      operationId: api.explorer.get_market_data_hour_from
+      parameters:
+        - in: query
+          name: base
+          default: 1.3.0
+          type: string
+          required: true
+          description: Base asset id
+        - in: query
+          name: quote
+          default: 1.3.1
+          type: string
+          required: true
+          description: Quote asset id
+        - in: query
+          name: start
+          default: "2019-08-01T00:00:00"
+          type: string
+          required: true
+          description: duration days
+        - in: query
+          name: end
+          default: "2019-08-01T08:00:00"
+          type: string
+          required: true
+          description: duration days
+      responses:
+        '200':
+          description: OHLC data
+        '500':
+          description: Error processing parameters
+      tags:
+        - api
+        - market
+ 
   "/market_data_hour_dur":
     get:
       description: Get OHLC chart data

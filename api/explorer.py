@@ -34,6 +34,31 @@ logger.info(config.MONGODB_DB_NAME)
 ###################### Q functions ######################
 
 @cache.memoize(timeout= 30 )    
+def EON_pair_rank(baseAsset, quoteAsset):
+    qconn = q.q(host = config.Q_HOST, port = config.Q_EON_PORT, user = config.Q_USER)
+    if baseAsset == 'null'  or  quoteAsset == 'null':
+        return {'msg': 'error params!'}
+    sql = 'get_rank[`%s;`%s]' % (baseAsset, quoteAsset)
+    try:
+        logger.info(sql)
+        res = qconn.k(str(sql))
+    except:
+        logger.error(traceback.format_exc())
+        logger.error(sql)
+        return []
+    qconn.close()
+    try:
+        # return map(lambda x: {'basset':x[0],'qasset':x[1],'account':x[2],'amount':x[3]},list(res))
+        return  list(map(lambda x: {'account':x[0],'total':x[1],'pay':x[2],'receive':x[3]},list(res)))
+    except:
+        logger.error(sql)
+        logger.error(res)
+        return {'msg': 'error when parse!'}
+
+
+
+
+@cache.memoize(timeout= 30 )    
 def statistic_rank_pair_top(duration, side, ttype, baseAsset, quoteAsset):
     qconn = q.q(host = config.Q_HOST, port = config.Q_PORT, user = config.Q_USER)
     if duration not in (1,12,24):
@@ -1294,6 +1319,31 @@ def get_market_chart_dates():
     date_list = [d.strftime("%Y-%m-%d") for d in date_list]
     return list(reversed(date_list))
 
+@cache.memoize(timeout= 300 )
+def get_market_data_hour_from(base, quote, start, end):
+    bitshares_ws_client = bitshares_ws_client_factory.get_instance()
+    base_asset = bitshares_ws_client.request('database', 'lookup_asset_symbols', [[base], 0])[0]
+    base_id = base_asset["id"]
+    base_precision = 10**base_asset["precision"]
+
+    quote_asset = bitshares_ws_client.request('database', 'lookup_asset_symbols', [[quote], 0])[0]
+    quote_id = quote_asset["id"]
+    quote_precision = 10**quote_asset["precision"]
+
+    market_history = bitshares_ws_client.request('history', 'get_market_history', [base_id, quote_id, 3600, start, end])
+
+    bitshares_ws_client.close()
+    quote_amt = 0
+    base_amt = 0
+    for m in market_history:
+        quote_amt += int(m['close_quote'])
+        base_amt += int(m['close_base'])
+    res = {'quote_amt':quote_amt, 'base_amt':base_amt ,'base_asset':base,'quote_asset': quote}
+    return res
+    # return market_history
+ 
+
+
 def get_market_data_hour_dur(base, quote, dur):
     bitshares_ws_client = bitshares_ws_client_factory.get_instance()
     base_asset = bitshares_ws_client.request('database', 'lookup_asset_symbols', [[base], 0])[0]
@@ -1414,7 +1464,7 @@ def get_market_chart_data(base, quote):
 
     return data
 
-@cache.memoize()
+@cache.memoize(timeout = 10)
 def agg_op_type():
     j = list( db.account_history.aggregate([{'$group' : {'_id' : "$bulk.operation_type", 'num_tutorial' : {'$sum' : 1}}}]))
     
