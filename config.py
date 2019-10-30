@@ -8,6 +8,7 @@ Q_USER= os.environ.get('Q_USER', 'sunqi:sunqi123')
 # WS_ADDR='wss://shanghai.51nebula.com/'
 # WS_ADDR='ws://139.224.11.255:8090/'
 WS_ADDR='ws://47.102.157.234:8090/'
+WS_SPECIAL_ADDR='wss://normal-hongkong.cybex.io'
 
 WEBSOCKET_URL = os.environ.get('WEBSOCKET_URL',WS_ADDR) 
 WEBSOCKET_URL2 = os.environ.get('WEBSOCKET_URL', WS_ADDR)
@@ -38,3 +39,8 @@ CORE_ASSET_SYMBOL_TESTNET = 'TEST'
 
 ### EON
 Q_EON_PORT = 9006
+
+################## ETO DATABASE ################
+ETO_MONGODB_DB_URL =  "mongodb://sunqi:sunqi123@127.0.0.1:27017/cybex"
+ETO_MONGODB_DB_NAME='etoForm'
+

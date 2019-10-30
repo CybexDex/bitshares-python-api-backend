@@ -27,11 +27,14 @@ logger.addHandler(logHandler)
 
 
 client = MongoClient(config.MONGODB_DB_URL)
+# eto_client = MongoClient(config.ETO_MONGODB_DB_URL)
 db = client[config.MONGODB_DB_NAME]
+# eto_db = eto_client[config.ETO_MONGODB_DB_NAME]
 logger.info(config.MONGODB_DB_URL)
 logger.info(config.MONGODB_DB_NAME)
 # qconn = q.q(host = config.Q_HOST, port = config.Q_PORT, user = config.Q_USER)
 ###################### Q functions ######################
+
 
 @cache.memoize(timeout= 30 )    
 def EON_pair_rank(baseAsset, quoteAsset):
