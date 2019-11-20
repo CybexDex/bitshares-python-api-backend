@@ -1151,6 +1151,16 @@ def get_block_header(block_num):
     return block_header
 
 @cache.memoize(timeout= 1)    
+def get_daily_peak():
+    try:
+        res = list(db.peak.find({}).sort([('block_num',-1)]).limit(28800))
+	peak_24 = max(map(lambda x: x['count'], res))
+    except:
+        peak_24 = None
+    return peak_24
+
+
+@cache.memoize(timeout= 1)    
 def get_peak():
     try:
         res = list(db.peak.find({}).sort([('block_num',-1)]).limit(1))[0]

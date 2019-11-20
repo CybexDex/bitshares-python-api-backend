@@ -1281,6 +1281,21 @@ paths:
         - api
         - block
 
+  "/get_daily_peak":
+    get:
+      description: Get the block header information of a block_num
+      operationId: api.explorer.get_daily_peak
+      responses:
+        '200':
+          description: Block header data
+        '500':
+          description: Error processing parameters
+      tags:
+        - api
+        - peak
+        - d20191119
+ 
+
   "/get_peak":
     get:
       description: Get the block header information of a block_num
